@@ -10,7 +10,7 @@ An agent (a Grok Bot, or any other MCP client) asks for a call. The daemon place
 | `message` | Call Mom and tell her my flight lands at 15:40 | Available |
 | `conversation` | Ask the landlord when the plumber is coming and bring back the answer | Available |
 
-Agents use it through MCP (Streamable HTTP, or a stdio shim); operators can also use `pbx-voice ctl`.
+Agents use it through MCP (a stdio shim on the same computer, or Streamable HTTP); operators can also use `pbx-voice ctl`.
 
 **Status:** early. Run any alarm beside a normal phone alarm until you trust it.
 
@@ -21,7 +21,7 @@ Agents use it through MCP (Streamable HTTP, or a stdio shim); operators can also
 - **Replies:** the daemon listens only after its prompt has finished, for up to 8 s. [Silero VAD](https://github.com/snakers4/silero-vad) (V5, 8 kHz, through [MinimalSileroVad](https://github.com/calebtt/MinimalSileroVad) and the CPU build of ONNX Runtime) finds where the reply starts and ends: after about 0.6 s of silence, or 5 s of speech. The transcript must match a listed phrase as a whole utterance: "yeah, I'm up" counts, but "yes" alone or "I'm up but tired" does not.
 - **Fallbacks:** if speech-to-text fails or takes over 3 s, 0.5–2.5 s of detected speech counts as a reply; a longer capture, such as a voicemail greeting, does not. A keypad press (RFC 4733) also counts. An alarm whose prompt could not be rendered plays a built-in wake tone.
 - **Ring time** is counted from the first 180/183, not from the INVITE. A call with neither ringing nor an answer within 7 s of the INVITE is cancelled as a SIP failure.
-- **Inbound calls** are never answered: each gets one immediate `480`, so the PBX sends the caller to voicemail or the extension's forwarding.
+- **Inbound calls** are never answered: each gets one immediate `480` (`inbound_reject_status` in the policy), so the PBX sends the caller to voicemail or the extension's forwarding.
 
 ### Alarm
 
@@ -80,7 +80,7 @@ If the voice session can't open within 3 s, a brief with a message falls back to
   - An invalid edit is ignored: the last valid prompt stays in use, and `status` shows the error under `conversation_prompt`.
   - Delete the file to go back to the default.
 - Each conversation's record includes the prompt's source and SHA-256, so any transcript can be traced to the exact prompt.
-- The brief is inserted as data, not as instructions: `{{call}}` and `{{brief}}` blocks, one field per line, with line breaks and block tags removed. Text in a brief can't add a heading or rule of its own.
+- The brief is inserted as data, not as instructions: the `{{call}}` and `{{brief}}` placeholders become `<call>` and `<brief>` blocks, one field per line, with line breaks and block tags removed. Text in a brief can't add a heading or rule of its own.
 - Treat the prompt like code: keep it under version control, and put no secrets in it. Assume a callee can get the model to repeat it.
 - The limits that matter don't depend on the prompt. The daemon enforces the disclosure, the time limit, the record-only tools, and the evidence checks.
 
@@ -90,13 +90,28 @@ pbx-voice places a call when it's asked to (`call_now`) and has no scheduler of 
 - **On Grok Bot:** ask the bot for the call, for example "wake me up at 5:30 on weekdays". It creates a routine for that time (a Weekdays routine at 5:30). The routine's instruction places the call with `call_now`, waits with `wait_for_call` until there's an outcome, and reports it. The documented routine schedules all repeat, so for a one-off call the bot deletes the routine after its first run.
 - **Allow the pbx-voice tools without approval for routines.** An approval requested by a routine expires after about 10 minutes, so an alarm waiting for one never rings.
 - **Keep waiting while it's `in_progress`.** An alarm that redials can take about 20 minutes, and `wait_for_call` waits at most 900 s, so the agent calls it again until there's an outcome.
-- **From cron:** `30 5 * * 1-5 pbx-voice start && pbx-voice ctl call_now '{"type":"alarm","to":"me"}'`.
+- **From cron** (use full paths, since cron's `PATH` is short, and set `SIPBOT_STATE_DIR` if you moved the state directory): `30 5 * * 1-5 $HOME/.local/bin/pbx-voice start && $HOME/.local/bin/pbx-voice ctl call_now '{"type":"alarm","to":"me"}'`.
 
 The daemon still enforces the policy (contacts, quiet hours, caps) on every call, whoever asked for it.
 
 ## Setup
 
-Requires the .NET 8 SDK to build, a SIP extension on your PBX (a dedicated one is best), and a host that can run ONNX Runtime: glibc-based Linux on x64 or arm64 (Alpine and other musl systems are not supported).
+You need a SIP extension on your PBX (a dedicated one is best) and a host that can run ONNX Runtime: glibc-based Linux on x64 or arm64 (Alpine and other musl systems are not supported).
+
+**From a release:** each release has a self-contained build for linux-x64 and linux-arm64 (no .NET needed), with the example configuration files, the systemd unit, and the agent skill (`SKILL.md`).
+
+```bash
+v=0.1.0
+curl -LO https://github.com/calebtt/pbx-voice/releases/download/v$v/pbx-voice-$v-linux-x64.tar.gz
+curl -LO https://github.com/calebtt/pbx-voice/releases/download/v$v/SHA256SUMS
+sha256sum --check --ignore-missing SHA256SUMS
+tar -xzf pbx-voice-$v-linux-x64.tar.gz
+./pbx-voice-$v-linux-x64/pbx-voice selftest
+```
+
+Each tarball also has a signed build-provenance attestation; [docs/security.md](docs/security.md) shows how to check it.
+
+**From source,** with the .NET 8 SDK:
 
 ```bash
 git clone --recursive https://github.com/calebtt/pbx-voice.git
@@ -107,11 +122,11 @@ dotnet publish src/PbxVoice.Daemon -c Release -r linux-x64 --self-contained \
 ./dist/pbx-voice paths     # shows the state directory
 ```
 
-A single-file build unpacks ONNX Runtime to a temp directory on first run. If that directory is mounted `noexec`, set `DOTNET_BUNDLE_EXTRACT_BASE_DIR` to a directory you own, or publish without `-p:PublishSingleFile=true`.
+A single-file build (the releases are one) unpacks its native libraries, ONNX Runtime among them, to `~/.cache/dotnet_bundle_extract` on first run, and again if they are deleted. If that directory is mounted `noexec`, set `DOTNET_BUNDLE_EXTRACT_BASE_DIR` to a directory you own, or publish without `-p:PublishSingleFile=true`. A framework-dependent build needs the ASP.NET Core 8 runtime.
 
 The state directory is `SIPBOT_STATE_DIR`, else `$XDG_STATE_HOME/pbx-voice`, else `~/.local/state/pbx-voice`. The daemon creates it with mode 0700 and writes every file 0600. Put two files in it:
 
-- **`policy.json`**: copy [`docs/policy.example.json`](docs/policy.example.json) and edit it. It holds the contacts, quiet hours, daily caps, phrase lists, and dialing settings. The agent can read it and cannot change it. Edits apply without a restart.
+- **`policy.json`**: copy [`docs/policy.example.json`](docs/policy.example.json) and edit it. It holds the contacts, quiet hours, daily caps, phrase lists, and dialing settings. No MCP tool can change it, and `list_contacts` shows agents only masked numbers (an agent with a shell on the same account can still edit the file; see Safety). Edits apply without a restart.
 - **`secrets.env`** (or the same variables in the environment, which win): see [`docs/secrets.env.example`](docs/secrets.env.example). `SIP_SERVER`, `SIP_USERNAME`, `SIP_PASSWORD`, optionally `SIP_PORT`, `SIP_FROMNAME`, `SIP_LOCAL_PORT`, and `XAI_API_KEY`. Without an xAI key, alarms still work (wake tone, speech detection), but messages and conversations are refused.
 
 Run it:
@@ -125,7 +140,7 @@ Run it:
 or as a systemd user service with [`docs/pbx-voice.service`](docs/pbx-voice.service).
 - **Without a service manager** (Grok Bot's computer has none): connect the agent through the stdio shim (below). It starts the daemon when a tool call finds it isn't running, so nothing needs to keep it running between calls.
 - **Detached:** a daemon started by `start` or the shim runs in its own session and isn't the shim's child, so it outlives the agent session that started it.
-- **One daemon per extension.** A second start finds the running one and uses it. The ASP.NET Core runtime is included in the self-contained build; a framework-dependent build needs the ASP.NET Core 8 runtime.
+- **One daemon per extension.** A second start finds the running one and uses it.
 
 ## Connecting an agent (MCP)
 
@@ -205,9 +220,9 @@ Unit tests use a fake clock and a scripted phone, so they cover policy days and 
 
 ## Grok plugin
 
-[`plugin/`](plugin/) packages the MCP connection and a skill for Grok; this repository is also its marketplace (`grok plugin marketplace add calebtt/pbx-voice`). See [`plugin/README.md`](plugin/README.md).
+[`plugin/`](plugin/) holds the MCP connection and the agent skill. On the Grok CLI, this repository is also its marketplace (`grok plugin marketplace add calebtt/pbx-voice`). Grok Bot doesn't install plugins from a repository; [`plugin/README.md`](plugin/README.md) gives the steps for both.
 
-Releases (tags `v*`) publish self-contained builds for linux-x64 and linux-arm64 with the example configuration files.
+Releases (tags `v*`) publish self-contained builds for linux-x64 and linux-arm64 with the example configuration files, the systemd unit, and `SKILL.md`, plus `SHA256SUMS` and build-provenance attestations.
 
 ## License
 

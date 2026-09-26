@@ -1,0 +1,38 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+      - name: Test
+        run: dotnet test PbxVoice.sln -c Release
+      - name: Build self-contained binaries
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          for rid in linux-x64 linux-arm64; do
+            dir="out/pbx-voice-$version-$rid"
+            dotnet publish src/PbxVoice.Daemon -c Release -r "$rid" --self-contained \
+              -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:Version="$version" -o "$dir"
+            # Debug symbols, XML docs, and a Windows-only codec DLL from SIPSorcery are not needed at run time.
+            rm -f "${dir:?}"/*.pdb "${dir:?}"/*.xml "${dir:?}"/*.dll
+            cp README.md LICENSE docs/policy.example.json docs/secrets.env.example docs/pbx-voice.service "$dir"/
+            tar -C out -czf "pbx-voice-$version-$rid.tar.gz" "pbx-voice-$version-$rid"
+          done
+          sha256sum pbx-voice-*.tar.gz > SHA256SUMS
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" pbx-voice-*.tar.gz SHA256SUMS --title "$GITHUB_REF_NAME" --generate-notes

@@ -117,6 +117,12 @@ dotnet test PbxVoice.sln
 
 Unit tests use a fake clock and a scripted phone, so they cover scheduling across DST changes, the call flows, redial rules, and policy checks without a PBX. The Silero tests run the real model on short recorded replies (`tests/PbxVoice.Tests/Fixtures`).
 
+## Grok plugin
+
+[`plugin/`](plugin/) packages the MCP connection and a skill for Grok; this repository is also its marketplace (`grok plugin marketplace add calebtt/pbx-voice`). See [`plugin/README.md`](plugin/README.md).
+
+Releases (tags `v*`) publish self-contained builds for linux-x64 and linux-arm64 with the example configuration files.
+
 ## License
 
 MIT

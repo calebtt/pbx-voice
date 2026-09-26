@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "pbx-voice": {
+      "type": "http",
+      "url": "${PBX_VOICE_MCP_URL:-http://127.0.0.1:8765/mcp}",
+      "headers": {
+        "Authorization": "Bearer ${PBX_VOICE_MCP_TOKEN}"
+      }
+    }
+  }
+}

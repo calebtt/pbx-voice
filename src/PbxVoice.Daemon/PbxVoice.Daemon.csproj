@@ -15,6 +15,12 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- The MCP front: Streamable HTTP for agents, stdio for the local shim. -->
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+    <PackageReference Include="ModelContextProtocol.AspNetCore" Version="2.2.0" />
+  </ItemGroup>
+
+  <ItemGroup>
     <!-- SipBotLib is a submodule pinned to a release tag (see .gitmodules). -->
     <ProjectReference Include="../../external/SipBotLib/SipBotLib.csproj" />
     <!-- Silero VAD (V5, 8 kHz) for reply detection; CPU ONNX Runtime (see Directory.Build.props). -->

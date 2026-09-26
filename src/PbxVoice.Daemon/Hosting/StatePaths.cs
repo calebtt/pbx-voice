@@ -24,6 +24,7 @@ internal sealed class StatePaths
     public string Calls => Path.Combine(Root, "calls");
     public string Tmp => Path.Combine(Root, "tmp");
     public string ControlSocket => Path.Combine(Root, "control.sock");
+    public string McpToken => Path.Combine(Root, "mcp-token");
 
     public static StatePaths FromEnvironment() => new(ResolveRoot(Environment.GetEnvironmentVariable));
 

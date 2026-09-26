@@ -115,7 +115,15 @@ internal sealed class DaemonHost
         };
         var service = new PbxVoiceService(time, policy, schedules, calls, clips, executor, phone, host);
         await using var control = new ControlServer(paths.ControlSocket, service.HandleAsync);
-        control.Start();
+        try
+        {
+            control.Start();
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or ArgumentException or System.Net.Sockets.SocketException or IOException)
+        {
+            Log.Error("Cannot open the control socket {Path}: {Error}", paths.ControlSocket, ex.Message);
+            return 5;
+        }
 
         // The agent's interface (PR-API-1, PR-SAFE-8).
         McpHttpFront? mcp = null;

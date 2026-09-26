@@ -30,6 +30,9 @@ internal sealed class ControlServer : IAsyncDisposable
 
     public void Start()
     {
+        string? dir = Path.GetDirectoryName(_path);
+        if (dir is not null && !Directory.Exists(dir))
+            StatePaths.CreatePrivateDirectory(dir);
         if (File.Exists(_path))
         {
             if (IsListening(_path))

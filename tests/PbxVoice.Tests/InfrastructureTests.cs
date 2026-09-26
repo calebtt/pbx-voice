@@ -42,6 +42,19 @@ public class StateFileTests : IDisposable
     }
 
     [Fact]
+    public void A_long_state_path_moves_the_control_socket_somewhere_short()
+    {
+        string shortRoot = "/home/u/.local/state/pbx-voice";
+        Assert.Equal(shortRoot + "/control.sock", StatePaths.SocketPathFor(shortRoot, _ => null));
+
+        string longRoot = "/tmp/" + new string('x', 120) + "/state";
+        string path = StatePaths.SocketPathFor(longRoot, k => k == "XDG_RUNTIME_DIR" ? _dir : null);
+        Assert.StartsWith(_dir + "/pbx-voice-", path);
+        Assert.True(System.Text.Encoding.UTF8.GetByteCount(path) <= 107);
+        Assert.Equal(path, StatePaths.SocketPathFor(longRoot, k => k == "XDG_RUNTIME_DIR" ? _dir : null)); // stable for ctl
+    }
+
+    [Fact]
     public void Only_one_daemon_per_extension()
     {
         using var first = AorLock.TryAcquire(_dir, "101@pbx.example.test");

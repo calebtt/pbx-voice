@@ -23,7 +23,26 @@ internal sealed class StatePaths
     public string Clips => Path.Combine(Root, "clips");
     public string Calls => Path.Combine(Root, "calls");
     public string Tmp => Path.Combine(Root, "tmp");
-    public string ControlSocket => Path.Combine(Root, "control.sock");
+    /// <summary>
+    /// <c>control.sock</c> in the state directory, unless that path is too long for a Unix socket
+    /// (about 108 bytes). Then a short private path, the same for the daemon and <c>ctl</c>:
+    /// <c>$XDG_RUNTIME_DIR/pbx-voice-{hash}.sock</c>, or <c>/tmp/pbx-voice-{user}/{hash}.sock</c>.
+    /// </summary>
+    public string ControlSocket => SocketPathFor(Root, Environment.GetEnvironmentVariable);
+
+    internal const int MaxSocketPathBytes = 100;
+
+    internal static string SocketPathFor(string root, Func<string, string?> env)
+    {
+        string inState = Path.Combine(root, "control.sock");
+        if (System.Text.Encoding.UTF8.GetByteCount(inState) <= MaxSocketPathBytes)
+            return inState;
+        string hash = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(root)))[..16].ToLowerInvariant();
+        string dir = env("XDG_RUNTIME_DIR") is { Length: > 0 } runtime && Directory.Exists(runtime)
+            ? runtime
+            : Path.Combine(Path.GetTempPath(), "pbx-voice-" + Environment.UserName);
+        return Path.Combine(dir, $"pbx-voice-{hash}.sock");
+    }
     public string McpToken => Path.Combine(Root, "mcp-token");
 
     public static StatePaths FromEnvironment() => new(ResolveRoot(Environment.GetEnvironmentVariable));

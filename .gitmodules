@@ -1,0 +1,3 @@
+[submodule "external/SipBotLib"]
+	path = external/SipBotLib
+	url = https://github.com/calebtt/SipBotLib.git

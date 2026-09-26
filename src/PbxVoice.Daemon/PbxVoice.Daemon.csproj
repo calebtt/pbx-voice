@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <AssemblyName>pbx-voice</AssemblyName>
+    <RootNamespace>PbxVoice</RootNamespace>
+    <Version>0.1.0</Version>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="PbxVoice.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- SipBotLib is a submodule pinned to a release tag (see .gitmodules). -->
+    <ProjectReference Include="../../external/SipBotLib/SipBotLib.csproj" />
+  </ItemGroup>
+
+</Project>

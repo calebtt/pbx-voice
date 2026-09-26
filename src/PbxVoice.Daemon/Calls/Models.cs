@@ -1,0 +1,203 @@
+using System.Text.Json;
+using System.Text.Json.Serialization;
+using PbxVoice.Policy;
+
+namespace PbxVoice.Calls;
+
+internal enum CallType { Alarm, Message, Conversation }
+
+internal enum CallStatus { Pending, InProgress, Done }
+
+/// <summary>Final outcomes (PR-OUT-2), plus <c>cancelled</c> for a call stopped through <c>cancel_call</c>.</summary>
+internal enum Outcome
+{
+    Awake, Played, NotAcknowledged, NotAnswered, Missed, Failed,
+    Confirmed, PlayedUnconfirmed,
+    Cancelled,
+}
+
+/// <summary>How one attempt ended.</summary>
+internal enum AttemptResult
+{
+    // Not answered; the split of PR-ALARM-4.
+    NoAnswer, Busy, SipFailure,
+    Cancelled,
+    // Alarm, answered.
+    Awake, Played, NotAcknowledged, Snoozed,
+    // Message, answered.
+    Confirmed, PlayedUnconfirmed, HungUpEarly,
+}
+
+internal enum AckSource { Stt, SpeechDetected, Keypad }
+
+/// <summary>Per-call options, after defaults and the policy caps are applied (PR-SCHED-5).</summary>
+internal sealed class CallOptions
+{
+    /// <summary><c>voice</c> or <c>none</c>.</summary>
+    public string Ack { get; set; } = "voice";
+    public bool Redial { get; set; } = true;
+    public int MaxAttempts { get; set; }
+    public int RetryMinutes { get; set; }
+    public int RingSeconds { get; set; }
+    public int SnoozeMinutes { get; set; }
+    public int MaxSnoozes { get; set; }
+
+    public bool VoiceAck => Ack == "voice";
+
+    public static CallOptions Defaults(CallType type) => type switch
+    {
+        CallType.Alarm => new() { Ack = "voice", Redial = true, MaxAttempts = 5, RetryMinutes = 3, RingSeconds = 45, SnoozeMinutes = 10, MaxSnoozes = 3 },
+        CallType.Message => new() { Ack = "voice", Redial = true, MaxAttempts = 2, RetryMinutes = 10, RingSeconds = 30 },
+        _ => new() { Ack = "voice", Redial = true, MaxAttempts = 2, RetryMinutes = 10, RingSeconds = 7 },
+    };
+
+    /// <summary>
+    /// Applies the agent's overrides to the defaults. Values outside the policy caps are refused,
+    /// not clamped, so the agent learns the limit. <c>redial: false</c> forces one attempt.
+    /// </summary>
+    public static CallOptions Resolve(CallType type, JsonElement? overrides, Limits limits, out string? error)
+    {
+        var o = Defaults(type);
+        error = null;
+        if (overrides is { ValueKind: JsonValueKind.Object } obj)
+        {
+            foreach (var prop in obj.EnumerateObject())
+            {
+                try
+                {
+                    switch (prop.Name)
+                    {
+                        case "ack":
+                            o.Ack = prop.Value.GetString() ?? "";
+                            if (o.Ack is not ("voice" or "none")) { error = "options.ack must be voice or none"; return o; }
+                            break;
+                        case "redial": o.Redial = prop.Value.GetBoolean(); break;
+                        case "max_attempts": o.MaxAttempts = prop.Value.GetInt32(); break;
+                        case "retry_minutes": o.RetryMinutes = prop.Value.GetInt32(); break;
+                        case "ring_seconds": o.RingSeconds = prop.Value.GetInt32(); break;
+                        case "snooze_minutes" when type == CallType.Alarm: o.SnoozeMinutes = prop.Value.GetInt32(); break;
+                        case "max_snoozes" when type == CallType.Alarm: o.MaxSnoozes = prop.Value.GetInt32(); break;
+                        default:
+                            error = $"options.{prop.Name} is not an option for {type.ToString().ToLowerInvariant()} calls";
+                            return o;
+                    }
+                }
+                catch (Exception ex) when (ex is InvalidOperationException or FormatException)
+                {
+                    error = $"options.{prop.Name} has the wrong type";
+                    return o;
+                }
+            }
+        }
+
+        int maxAttempts = type == CallType.Alarm ? limits.MaxAlarmAttempts : limits.MaxMessageAttempts;
+        if (o.MaxAttempts < 1 || o.MaxAttempts > maxAttempts)
+            error = $"options.max_attempts must be 1-{maxAttempts} (policy cap)";
+        else if (o.RingSeconds < 5 || o.RingSeconds > limits.MaxRingSeconds)
+            error = $"options.ring_seconds must be 5-{limits.MaxRingSeconds} (policy cap)";
+        else if (o.RetryMinutes < limits.MinRetryMinutes || o.RetryMinutes > 24 * 60)
+            error = $"options.retry_minutes must be {limits.MinRetryMinutes}-1440";
+        else if (type == CallType.Alarm && (o.SnoozeMinutes < 1 || o.SnoozeMinutes > 120))
+            error = "options.snooze_minutes must be 1-120";
+        else if (type == CallType.Alarm && (o.MaxSnoozes < 0 || o.MaxSnoozes > 10))
+            error = "options.max_snoozes must be 0-10";
+        if (!o.Redial)
+            o.MaxAttempts = 1;
+        return o;
+    }
+}
+
+/// <summary>
+/// The clips a call plays, by clip id in the clip store. An id starting with <c>builtin:</c> is
+/// generated by the daemon and needs no rendering (PR-ALARM-6).
+/// </summary>
+internal sealed class ClipSet
+{
+    /// <summary>Alarm: the wake-up prompt (voice) or wake-up message (none).</summary>
+    public string? Prompt { get; set; }
+    public string? Closing { get; set; }
+    public string? SnoozeAck { get; set; }
+    /// <summary>Message: the message itself.</summary>
+    public string? Message { get; set; }
+    public string? ConfirmPrompt { get; set; }
+    /// <summary>For contacts that are not <c>self</c> (PR-SAFE-6).</summary>
+    public string? Disclosure { get; set; }
+}
+
+internal sealed class ReplyRecord
+{
+    public DateTimeOffset At { get; set; }
+    /// <summary><c>awake</c>, <c>snooze</c>, <c>confirm</c>, <c>repeat</c>, <c>unrecognized</c>, <c>none</c>, or <c>hung_up</c>.</summary>
+    public string Intent { get; set; } = "none";
+    public AckSource? Source { get; set; }
+    public string? Transcript { get; set; }
+    public int SpeechMs { get; set; }
+    public string? SttError { get; set; }
+    public string? EndedBy { get; set; }
+}
+
+internal sealed class AttemptRecord
+{
+    public int Number { get; set; }
+    public DateTimeOffset StartedAt { get; set; }
+    /// <summary>Snooze call-backs do not count toward <c>max_attempts</c>.</summary>
+    public bool Snooze { get; set; }
+    public int? RingingAfterMs { get; set; }
+    public int? RingingStatus { get; set; }
+    public int? FinalStatus { get; set; }
+    public string? Detail { get; set; }
+    public DateTimeOffset? AnsweredAt { get; set; }
+    public DateTimeOffset? EndedAt { get; set; }
+    public AttemptResult? Result { get; set; }
+    public int PromptPlays { get; set; }
+    public int MessagePlays { get; set; }
+    public bool? CutOff { get; set; }
+    public List<ReplyRecord> Replies { get; set; } = new();
+
+    [JsonIgnore]
+    public bool Answered => AnsweredAt is not null;
+}
+
+internal sealed class ReregisterRecord
+{
+    public DateTimeOffset At { get; set; }
+    public string Before { get; set; } = "";
+    public bool Attempted { get; set; }
+    public bool? Registered { get; set; }
+}
+
+internal sealed class CallRecord
+{
+    public string CallId { get; set; } = "";
+    public string? ScheduleId { get; set; }
+    public CallType Type { get; set; }
+    public string Contact { get; set; } = "";
+    public string MaskedNumber { get; set; } = "";
+    public bool Self { get; set; }
+
+    /// <summary>The dial target. Kept in the 0600 record for redials; tool results show only the masked number.</summary>
+    public string TargetUri { get; set; } = "";
+
+    public CallOptions Options { get; set; } = new();
+    public ClipSet Clips { get; set; } = new();
+    public string? Text { get; set; }
+    public DateTimeOffset CreatedAt { get; set; }
+    public DateTimeOffset FireTime { get; set; }
+    public CallStatus Status { get; set; }
+    public DateTimeOffset? NextAttemptAt { get; set; }
+    public List<AttemptRecord> Attempts { get; set; } = new();
+    public int Snoozes { get; set; }
+    public Outcome? Outcome { get; set; }
+    public string? Reason { get; set; }
+    public AckSource? AckSource { get; set; }
+    public int BilledSeconds { get; set; }
+    public ReregisterRecord? Reregister { get; set; }
+    public List<string> Notes { get; set; } = new();
+    public DateTimeOffset? CompletedAt { get; set; }
+
+    [JsonIgnore]
+    public int CountedAttempts => Attempts.Count(a => !a.Snooze);
+}
+
+/// <summary>A resolved dial target.</summary>
+internal sealed record Target(string Contact, string Uri, string MaskedNumber, bool Self);

@@ -17,6 +17,8 @@
   <ItemGroup>
     <!-- SipBotLib is a submodule pinned to a release tag (see .gitmodules). -->
     <ProjectReference Include="../../external/SipBotLib/SipBotLib.csproj" />
+    <!-- Silero VAD (V5, 8 kHz) for reply detection; CPU ONNX Runtime (see Directory.Build.props). -->
+    <ProjectReference Include="../../external/MinimalSileroVad/MinimalSileroVAD.Core/MinimalSileroVAD.Core.csproj" />
   </ItemGroup>
 
 </Project>

@@ -13,14 +13,16 @@ internal sealed class SipActiveCall : IActiveCall
 
     private readonly SipClient _client;
     private readonly CallAudioEndPoint _endpoint;
+    private readonly ISpeechClassifier _vad;
     private readonly TaskCompletionSource _ended = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private readonly ConcurrentQueue<char> _digits = new();
     private TaskCompletionSource<char>? _digitWaiter;
 
-    public SipActiveCall(SipClient client, CallAudioEndPoint endpoint)
+    public SipActiveCall(SipClient client, CallAudioEndPoint endpoint, ISpeechClassifier vad)
     {
         _client = client;
         _endpoint = endpoint;
+        _vad = vad;
         _client.CallEnded += OnCallEnded;
         _client.DtmfDigitReceived += OnDigit;
         if (!_client.IsCallActive)
@@ -72,7 +74,7 @@ internal sealed class SipActiveCall : IActiveCall
         if (!IsUp)
             return new Capture(CaptureEnd.HungUp, false, TimeSpan.Zero, Array.Empty<byte>());
 
-        var detector = new SpeechDetector(settings);
+        var detector = new SpeechDetector(settings, _vad);
         var done = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
         var digit = new TaskCompletionSource<char>(TaskCreationOptions.RunContinuationsAsynchronously);
         var cancelled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -98,30 +100,32 @@ internal sealed class SipActiveCall : IActiveCall
         TimeSpan speech;
         byte[] audio;
         DetectorEnd detectorEnd;
+        float peak;
         lock (detector)
         {
             started = detector.SpeechStarted;
             speech = detector.Speech;
             audio = G711.Encode(detector.Audio);
             detectorEnd = detector.End;
+            peak = detector.PeakProbability;
         }
 
         if (first == digit.Task)
         {
             _digits.TryDequeue(out _);
-            return new Capture(CaptureEnd.Keypad, started, speech, audio, digit.Task.Result);
+            return new Capture(CaptureEnd.Keypad, started, speech, audio, digit.Task.Result, peak);
         }
         if (first == cancelled.Task)
-            return new Capture(CaptureEnd.Cancelled, started, speech, audio);
+            return new Capture(CaptureEnd.Cancelled, started, speech, audio, VadPeak: peak);
         if (first == _ended.Task)
-            return new Capture(CaptureEnd.HungUp, started, speech, audio);
+            return new Capture(CaptureEnd.HungUp, started, speech, audio, VadPeak: peak);
         var end = detectorEnd switch
         {
             DetectorEnd.Silence => CaptureEnd.Silence,
             DetectorEnd.MaxSpeech => CaptureEnd.MaxSpeech,
             _ => started ? CaptureEnd.MaxSpeech : CaptureEnd.NoSpeech,
         };
-        return new Capture(end, started, speech, audio);
+        return new Capture(end, started, speech, audio, VadPeak: peak);
     }
 
     public async Task<bool> PauseAsync(TimeSpan duration, CancellationToken ct)

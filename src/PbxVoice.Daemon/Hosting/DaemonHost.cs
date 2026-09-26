@@ -78,12 +78,27 @@ internal sealed class DaemonHost
             stt = none;
         }
 
+        // Silero VAD finds the callee's reply. There is no fallback detector: a host that cannot
+        // load ONNX Runtime cannot run the daemon (`pbx-voice selftest` checks this).
+        SileroClassifier vad;
+        try
+        {
+            vad = SileroClassifier.Load();
+        }
+        catch (Exception ex)
+        {
+            Log.Error(ex, "Cannot load the Silero voice-activity model (ONNX Runtime); run `pbx-voice selftest`");
+            return 4;
+        }
+        using var vadLifetime = vad;
+        Log.Information("Silero VAD loaded in {Ms} ms", (int)vad.LoadTime.TotalMilliseconds);
+
         var time = TimeProvider.System;
         var clips = new ClipStore(paths.Clips, tts);
         var calls = new CallStore(paths.Calls);
         var schedules = new ScheduleStore(paths.Schedules);
         using var phone = new SipPhoneLine(sipConfig, secrets.LocalSipPort, policy.Current.Register,
-            () => policy.Current.InboundRejectStatus, time);
+            () => policy.Current.InboundRejectStatus, vad, time);
         var executor = new Executor(time, phone, policy, calls, clips, new ReplyListener(stt, time));
         executor.Recover();
 

@@ -132,6 +132,8 @@ internal sealed class ReplyRecord
     public AckSource? Source { get; set; }
     public string? Transcript { get; set; }
     public int SpeechMs { get; set; }
+    /// <summary>The highest Silero speech probability during the capture.</summary>
+    public float? VadPeak { get; set; }
     public string? SttError { get; set; }
     public string? EndedBy { get; set; }
 }

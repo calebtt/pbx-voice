@@ -40,6 +40,7 @@ internal sealed class ReplyListener
         {
             At = _time.GetUtcNow(),
             SpeechMs = (int)capture.Speech.TotalMilliseconds,
+            VadPeak = capture.VadPeak is { } peak ? MathF.Round(peak, 3) : null,
             EndedBy = Snake(capture.End.ToString()),
         };
         bool hungUp = capture.End == CaptureEnd.HungUp;

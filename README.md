@@ -16,9 +16,9 @@ The MCP tool front for agents is planned; today the daemon is driven with `pbx-v
 
 ## How it works
 
-- **SIP:** [SipBotLib](https://github.com/calebtt/SipBotLib) (SIPSorcery), as a submodule pinned to a release. One registration, one call at a time, PCMU (G.711 μ-law) audio.
-- **Speech:** xAI text-to-speech renders every clip when the call is scheduled, as 8 kHz μ-law. xAI speech-to-text transcribes short spoken replies ("I'm up", "got it"). No local speech models.
-- **Replies:** the daemon listens only after its prompt has finished, for up to 8 s. A reply ends after about 0.6 s of silence or 5 s of speech. The transcript must match a listed phrase as a whole utterance: "yeah, I'm up" counts, but "yes" alone or "I'm up but tired" does not.
+- **SIP:** [SipBotLib](https://github.com/calebtt/SipBotLib) (SIPSorcery), as a submodule pinned to a release. MinimalSileroVad is a submodule too. One registration, one call at a time, PCMU (G.711 μ-law) audio.
+- **Speech:** xAI text-to-speech renders every clip when the call is scheduled, as 8 kHz μ-law. xAI speech-to-text transcribes short spoken replies ("I'm up", "got it"). No local speech-to-text or text-to-speech.
+- **Replies:** the daemon listens only after its prompt has finished, for up to 8 s. [Silero VAD](https://github.com/snakers4/silero-vad) (V5, 8 kHz, through [MinimalSileroVad](https://github.com/calebtt/MinimalSileroVad) and the CPU build of ONNX Runtime) finds where the reply starts and ends: after about 0.6 s of silence, or 5 s of speech. The transcript must match a listed phrase as a whole utterance: "yeah, I'm up" counts, but "yes" alone or "I'm up but tired" does not.
 - **Fallbacks:** if speech-to-text fails or takes over 3 s, 0.5–2.5 s of detected speech counts as a reply; a longer capture, such as a voicemail greeting, does not. A keypad press (RFC 4733) also counts. An alarm whose prompt could not be rendered plays a built-in wake tone.
 - **Ring time** is counted from the first 180/183, not from the INVITE. A call with neither ringing nor an answer within 7 s of the INVITE is cancelled as a SIP failure.
 - **Inbound calls** are never answered: each gets one immediate `480`, so the PBX sends the caller to voicemail or the extension's forwarding.
@@ -40,14 +40,18 @@ Plays a pause, then (for contacts that are not `self`) a disclosure that this is
 
 ## Setup
 
-Requires the .NET 8 SDK and a SIP extension on your PBX (a dedicated one is best).
+Requires the .NET 8 SDK to build, a SIP extension on your PBX (a dedicated one is best), and a host that can run ONNX Runtime: glibc-based Linux on x64 or arm64 (Alpine and other musl systems are not supported).
 
 ```bash
 git clone --recursive https://github.com/calebtt/pbx-voice.git
 cd pbx-voice
-dotnet publish src/PbxVoice.Daemon -c Release -r linux-x64 --self-contained -p:PublishSingleFile=true -o dist
+dotnet publish src/PbxVoice.Daemon -c Release -r linux-x64 --self-contained \
+  -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -o dist
+./dist/pbx-voice selftest  # checks this host can load ONNX Runtime and run Silero VAD
 ./dist/pbx-voice paths     # shows the state directory
 ```
+
+A single-file build unpacks ONNX Runtime to a temp directory on first run. If that directory is mounted `noexec`, set `DOTNET_BUNDLE_EXTRACT_BASE_DIR` to a directory you own, or publish without `-p:PublishSingleFile=true`.
 
 The state directory is `SIPBOT_STATE_DIR`, else `$XDG_STATE_HOME/pbx-voice`, else `~/.local/state/pbx-voice`. The daemon creates it with mode 0700 and writes every file 0600. Put two files in it:
 
@@ -111,7 +115,7 @@ dotnet build PbxVoice.sln
 dotnet test PbxVoice.sln
 ```
 
-Unit tests use a fake clock and a scripted phone, so they cover scheduling across DST changes, the call flows, redial rules, and policy checks without a PBX.
+Unit tests use a fake clock and a scripted phone, so they cover scheduling across DST changes, the call flows, redial rules, and policy checks without a PBX. The Silero tests run the real model on short recorded replies (`tests/PbxVoice.Tests/Fixtures`).
 
 ## License
 

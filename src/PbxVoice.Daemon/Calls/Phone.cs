@@ -58,7 +58,7 @@ internal sealed record PlayResult(PlayEnd End, TimeSpan Played);
 
 internal enum CaptureEnd { Silence, MaxSpeech, NoSpeech, Keypad, HungUp, Cancelled }
 
-internal sealed record Capture(CaptureEnd End, bool SpeechStarted, TimeSpan Speech, byte[] MuLaw, char? Digit = null);
+internal sealed record Capture(CaptureEnd End, bool SpeechStarted, TimeSpan Speech, byte[] MuLaw, char? Digit = null, float? VadPeak = null);
 
 /// <summary>An answered call.</summary>
 internal interface IActiveCall : IAsyncDisposable

@@ -14,6 +14,7 @@ const string Usage = """
       pbx-voice daemon                    run the daemon (foreground; logs to stderr)
       pbx-voice ctl <operation> [json]    call an operation on the running daemon
       pbx-voice paths                     show where state, policy, and secrets live
+      pbx-voice selftest                  check that this host can run the daemon (ONNX Runtime, Silero VAD)
       pbx-voice version
 
     Operations: schedule_call, call_now, wait_for_call, list_schedules, cancel_schedule,
@@ -29,6 +30,9 @@ const string Usage = """
 Log.Logger = new LoggerConfiguration()
     .MinimumLevel.Information()
     .MinimumLevel.Override("SIPSorcery", LogEventLevel.Warning)
+    // MinimalSileroVad tries CUDA first and logs the expected failure with a stack trace; the
+    // daemon ships the CPU build of ONNX Runtime, so that attempt always fails.
+    .Filter.ByExcluding(e => e.MessageTemplate.Text.StartsWith("CUDA execution provider unavailable", StringComparison.Ordinal))
     .WriteTo.Console(standardErrorFromLevel: LogEventLevel.Verbose)
     .CreateLogger();
 
@@ -57,6 +61,8 @@ try
             Console.WriteLine($"locks:           {StatePaths.LocksDirectory(Environment.GetEnvironmentVariable)}");
             return 0;
         }
+        case "selftest":
+            return SelfTest.Run(Console.Out);
         case "version" or "--version":
             Console.WriteLine(DaemonHost.Version);
             return 0;

@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Net;
 using PbxVoice.Calls;
+using PbxVoice.Speech;
 using Serilog;
 using SIPSorcery.SIP;
 using SipBot;
@@ -18,11 +19,13 @@ internal sealed class SipPhoneLine : IPhoneLine, IDisposable
     private readonly SipClient _client;
     private readonly TimeProvider _time;
     private readonly Func<int> _inboundStatus;
+    private readonly ISpeechClassifier _vad;
     private readonly ConcurrentDictionary<string, DateTime> _rejected = new();
 
-    public SipPhoneLine(SipConfig config, int localPort, bool register, Func<int> inboundStatus, TimeProvider time)
+    public SipPhoneLine(SipConfig config, int localPort, bool register, Func<int> inboundStatus, ISpeechClassifier vad, TimeProvider time)
     {
         _time = time;
+        _vad = vad;
         _inboundStatus = inboundStatus;
         _transport = new SIPTransport();
         _transport.AddSIPChannel(new SIPUDPChannel(IPAddress.Any, localPort));
@@ -98,7 +101,7 @@ internal sealed class SipPhoneLine : IPhoneLine, IDisposable
 
         if (answered)
         {
-            var call = new SipActiveCall(_client, endpoint);
+            var call = new SipActiveCall(_client, endpoint, _vad);
             if (ct.IsCancellationRequested)
             {
                 await call.HangupAsync().ConfigureAwait(false);

@@ -33,7 +33,7 @@ Grok Bot runs the daemon on its own cloud computer, which all of your bots share
   ```bash
   setsid nohup /workspace/pbx-voice/pbx-voice daemon >> /workspace/pbx-voice/daemon.log 2>&1 &
   ```
-- **Scheduled calls need the daemon running when they're due.** Unofficial reports say the computer sleeps when idle, which would stop the daemon; this isn't confirmed yet. A call that comes due while the daemon is down still goes out when it restarts, within 15 minutes for alarms and 5 minutes for other calls; after that it's recorded as `missed`.
+- **Calls at a set time come from your bot's routines,** not from the daemon: the routine places the call with `call_now` and waits for the outcome (the skill explains how). Allow the pbx-voice tools without approval (Auto-review: Always allow), because an approval a routine asks for expires after about 10 minutes. The daemon has to be running when the routine fires; unofficial reports say the computer sleeps when idle, which would stop it.
 - **The agent shares the daemon's user account.** It can read the secrets and edit the policy, so the policy guides it but can't bind it. See [docs/security.md](../docs/security.md) for what does hold.
 
 To use the stdio shim instead of HTTP (same machine, same user), configure the server yourself:

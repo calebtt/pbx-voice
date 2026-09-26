@@ -23,7 +23,7 @@ It can't transfer calls, receive calls (inbound calls are rejected), or run comm
 
 **Always enforced by the daemon, whatever the agent, brief, or prompt says:**
 - Callees must be listed in the policy (unless `allow_unlisted_numbers` is on). Alarms only call `self`.
-- Quiet hours, daily call caps, and per-call and per-day conversation minutes. These are checked when a call is scheduled and again when it fires.
+- Quiet hours, daily call caps, and per-call and per-day conversation minutes. These are checked when a call is requested and again before it dials.
 - The disclosure clip for callees that are not `self`.
 - The time limit on conversations.
 - The voice model's tools, which can't dial, transfer, or read data.
@@ -47,7 +47,7 @@ On that setup, the policy, the prompt, and the skill's rules guide an agent that
 - **xAI:** use an API key only for pbx-voice, with prepaid credit or a spending limit, so its cost is capped and it can be revoked on its own.
 - **The PBX, if you administer it:** limit the extension's outbound routes (no international or premium numbers), and allow one call at a time. pbx-voice doesn't rely on this, since many operators can't change their PBX. Where it's possible, it's the strongest limit on what the SIP password can do.
 - **The PBX's call records** are a log of every call from the extension that the agent can't edit.
-- **Approvals in the agent host:** if the host can require approval before specific tool calls, consider requiring it for `call_now` and `schedule_call`.
+- **Approvals in the agent host:** if the host can require approval before specific tool calls, requiring it for `call_now` puts a person in front of every call. On Grok Bot that also stops calls placed by routines (their approval requests expire after about 10 minutes), so it only suits setups that place calls while someone is in the chat.
 
 Running the daemon as a separate system user only helps if the agent's account can't use `sudo` without a password.
 
@@ -84,7 +84,7 @@ How the risks from the [OWASP list](https://genai.owasp.org/2025/12/09/owasp-top
 | Risk | Here |
 |---|---|
 | ASI01 Agent goal hijack | The prompt injection paths above |
-| ASI02 Tool misuse | The policy checks at schedule and fire time, caps, and record-only voice tools |
+| ASI02 Tool misuse | The policy checks when a call is requested and before it dials, caps, and record-only voice tools |
 | ASI03 Identity and privilege abuse | One extension and one key for pbx-voice. On a shared computer, the agent holds the operator's privileges (see above) |
 | ASI04 Supply chain | Pinned Actions, submodules, and packages. Release checksums and provenance |
 | ASI08 Cascading failures | Redial limits, daily caps, and the per-day conversation minutes |

@@ -15,7 +15,7 @@ It can't transfer calls, receive calls (inbound calls are rejected), or run comm
 | Party | Reaches pbx-voice through | Trusted with |
 |---|---|---|
 | Operator | `policy.json`, `secrets.env`, `conversation-prompt.txt`, the control socket | Everything: contacts, limits, credentials, the prompt |
-| Agent | The MCP tools, with a bearer token | Scheduling calls within the policy, and reading call records |
+| Agent | The MCP tools: over HTTP with a bearer token, or through the stdio shim on the same account | Placing calls within the policy, and reading call records |
 | Callee | Their voice on the call | Nothing: their words are data, never instructions |
 | Voice model | The daemon's realtime session | Speaking within the brief, and calling record-only tools |
 

@@ -8,24 +8,28 @@ using Serilog;
 using Serilog.Events;
 
 const string Usage = """
-    pbx-voice: scheduled phone calls over your own SIP extension
+    pbx-voice: phone calls for agents over your own SIP extension
 
     Usage:
       pbx-voice daemon                    run the daemon (foreground; logs to stderr)
+      pbx-voice start                     start the daemon in the background unless it's running (log: daemon.log)
+      pbx-voice stop [--force]            stop it (refused during a call unless --force)
       pbx-voice ctl <operation> [json]    call an operation on the running daemon
-      pbx-voice mcp-stdio                 MCP server on stdin/stdout, forwarding to the running daemon
+      pbx-voice mcp-stdio                 MCP server on stdin/stdout; starts the daemon if needed (PBX_VOICE_AUTOSTART=0: don't)
       pbx-voice mcp-token                 print the MCP bearer token and endpoint for the agent's config
       pbx-voice paths                     show where state, policy, and secrets live
       pbx-voice prompt                    print the built-in conversation prompt (a starting point for your own)
       pbx-voice selftest                  check that this host can run the daemon (ONNX Runtime, Silero VAD)
       pbx-voice version
 
-    Operations: schedule_call, call_now, wait_for_call, list_schedules, cancel_schedule,
-    cancel_call, list_calls, get_call, list_contacts, status
+    Operations: call_now, wait_for_call, cancel_call, list_calls, get_call, list_contacts, status
+
+    pbx-voice places calls when asked; it has no scheduler. For a call at a later time, have a
+    scheduler (the agent's routines, or cron) run call_now at that time.
 
     Examples:
       pbx-voice ctl status
-      pbx-voice ctl schedule_call '{"type":"alarm","to":"me","repeat":{"days":"weekdays","time":"05:30","tz":"America/Chicago"}}'
+      pbx-voice ctl call_now '{"type":"alarm","to":"me"}'
       pbx-voice ctl call_now '{"type":"message","to":"mom","text":"My flight lands at 3:40."}'
       pbx-voice ctl wait_for_call '{"call_id":"c_...","timeout_sec":300}'
     """;
@@ -63,8 +67,21 @@ try
             Console.WriteLine($"control socket:  {paths.ControlSocket}");
             Console.WriteLine($"mcp token:       {paths.McpToken}");
             Console.WriteLine($"prompt:          {paths.ConversationPrompt} (optional; the built-in prompt applies without it)");
+            Console.WriteLine($"daemon log:      {paths.DaemonLog} (when started with `pbx-voice start` or by the stdio shim)");
             Console.WriteLine($"locks:           {StatePaths.LocksDirectory(Environment.GetEnvironmentVariable)}");
             return 0;
+        }
+        case "start":
+        {
+            var result = await Launcher.EnsureRunningAsync(StatePaths.FromEnvironment(), CancellationToken.None);
+            (result.Ok ? Console.Out : Console.Error).WriteLine(result.Message);
+            return result.Ok ? 0 : 1;
+        }
+        case "stop":
+        {
+            var result = await Launcher.StopAsync(StatePaths.FromEnvironment(), args.Skip(1).Contains("--force"), CancellationToken.None);
+            (result.Ok ? Console.Out : Console.Error).WriteLine(result.Message);
+            return result.Ok ? 0 : 1;
         }
         case "mcp-stdio":
         {
@@ -126,9 +143,14 @@ static async Task<int> CtlAsync(string[] ctlArgs)
     {
         response = await ControlClient.SendAsync(StatePaths.FromEnvironment().ControlSocket, ctlArgs[0], request, CancellationToken.None);
     }
-    catch (SocketException ex)
+    catch (DaemonUnavailableException ex)
     {
-        Console.Error.WriteLine($"cannot reach the daemon ({ex.SocketErrorCode}); is `pbx-voice daemon` running?");
+        Console.Error.WriteLine($"{ex.Message}; start it with `pbx-voice start`");
+        return 2;
+    }
+    catch (IOException ex)
+    {
+        Console.Error.WriteLine($"the connection to the daemon failed ({ex.Message}); check with list_calls before retrying");
         return 2;
     }
 

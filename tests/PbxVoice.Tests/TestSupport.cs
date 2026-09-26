@@ -3,7 +3,6 @@ using Microsoft.Extensions.Time.Testing;
 using PbxVoice.Audio;
 using PbxVoice.Calls;
 using PbxVoice.Policy;
-using PbxVoice.Scheduling;
 using PbxVoice.Service;
 using PbxVoice.Speech;
 
@@ -216,12 +215,14 @@ internal sealed class Harness : IDisposable
         Policy = new PolicyProvider(policy ?? Policies.Standard());
         Clips = new ClipStore(Paths.Clips, Tts);
         Calls = new CallStore(Paths.Calls);
-        Schedules = new ScheduleStore(Paths.Schedules);
         Executor = new Executor(Time, Phone, Policy, Calls, Clips, new ReplyListener(Stt, Time, TimeSpan.FromSeconds(3)), Sessions,
             new Conversation.PromptProvider(Paths.ConversationPrompt));
-        Service = new PbxVoiceService(Time, Policy, Schedules, Calls, Clips, Executor, Phone,
-            new HostStatus { Version = "test", StateDirectory = Dir, XaiKeyPresent = true });
+        Service = new PbxVoiceService(Time, Policy, Calls, Clips, Executor, Phone,
+            new HostStatus { Version = "test", StateDirectory = Dir, XaiKeyPresent = true, RequestStop = () => StopRequests++ });
     }
+
+    /// <summary>How many times the shutdown operation asked the daemon to stop.</summary>
+    public int StopRequests { get; private set; }
 
     public string Dir { get; }
     public Hosting.StatePaths Paths { get; }
@@ -233,7 +234,6 @@ internal sealed class Harness : IDisposable
     public PolicyProvider Policy { get; }
     public ClipStore Clips { get; }
     public CallStore Calls { get; }
-    public ScheduleStore Schedules { get; }
     public Executor Executor { get; }
     public PbxVoiceService Service { get; }
 

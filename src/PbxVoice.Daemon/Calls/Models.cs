@@ -176,7 +176,6 @@ internal sealed class ReregisterRecord
 internal sealed class CallRecord
 {
     public string CallId { get; set; } = "";
-    public string? ScheduleId { get; set; }
     public CallType Type { get; set; }
     public string Contact { get; set; } = "";
     public string MaskedNumber { get; set; } = "";
@@ -189,6 +188,7 @@ internal sealed class CallRecord
     public ClipSet Clips { get; set; } = new();
     public string? Text { get; set; }
     public DateTimeOffset CreatedAt { get; set; }
+    /// <summary>When the call should start (the <c>call_now</c> time); its grace window counts from here.</summary>
     public DateTimeOffset FireTime { get; set; }
     public CallStatus Status { get; set; }
     public DateTimeOffset? NextAttemptAt { get; set; }

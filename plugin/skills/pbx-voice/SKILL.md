@@ -2,14 +2,14 @@
 name: pbx-voice
 description: Place real phone calls through the user's own phone extension with the pbx-voice MCP tools, right away or at a set time through your routines. Wake-up alarms, spoken messages, and short AI conversations that ask questions and bring back answers. Use when the user asks to call someone, wake them up by phone, leave someone a message by phone, or find something out by phoning a contact.
 when-to-use: "call me at", "wake me up", "wake-up call", "phone Mom and tell her", "call the landlord and ask", "find out when", "leave a voicemail", "did the call go through", "cancel my wake-up call"
-compatibility: Requires the pbx-voice daemon and its policy on this computer, and its MCP server configured (see the plugin README).
+compatibility: Requires the pbx-voice binary and its policy on this computer, and its MCP server (`pbx-voice mcp-stdio`) configured (see the plugin README). The MCP server starts the pbx-voice daemon when it isn't running.
 metadata:
   short-description: Phone calls over your own SIP extension
 ---
 
 # pbx-voice: phone calls for the user
 
-pbx-voice places real phone calls from the user's own phone extension. When you ask it to (`call_now`), it places the call, plays or talks, and writes a record. For a call at a set time, you create a routine that places the call at that time. You never run the call yourself.
+pbx-voice places real phone calls from the user's own phone extension. When you ask it to (`call_now`), it places the call, plays or talks, and writes a record. It has no scheduler: for a call at a set time, you create a routine that places the call at that time. You never run the call yourself.
 
 ## Rules
 
@@ -55,6 +55,8 @@ Use your routines. You can add, change, pause, and delete them from chat.
   - `max_minutes`: the hard limit.
 
   Outcomes: `completed` (every required answer backed by the callee's words), `partial`, `declined`, `voicemail_left`, `degraded_to_message`, `not_answered`, `missed`, `failed`. It costs voice-API time; keep `max_minutes` small.
+
+`missed` means the daemon couldn't start the call in time: within 15 minutes of `call_now` for an alarm, or 5 for the other types (for example because another call was still going). It was never dialed.
 
 ## Patterns
 

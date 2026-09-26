@@ -52,16 +52,16 @@ public class McpTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task The_ten_tools_are_listed_with_descriptions()
+    public async Task The_seven_tools_are_listed_with_descriptions()
     {
         var tools = await _client.ListToolsAsync();
         Assert.Equal(
-            new[] { "call_now", "cancel_call", "cancel_schedule", "get_call", "list_calls", "list_contacts", "list_schedules", "schedule_call", "status", "wait_for_call" },
+            new[] { "call_now", "cancel_call", "get_call", "list_calls", "list_contacts", "status", "wait_for_call" },
             tools.Select(t => t.Name).OrderBy(n => n));
         Assert.All(tools, t => Assert.False(string.IsNullOrWhiteSpace(t.Description)));
-        var schedule = tools.Single(t => t.Name == "schedule_call");
-        string schema = schedule.JsonSchema.GetRawText();
-        Assert.Contains("\"repeat\"", schema);
+        var callNow = tools.Single(t => t.Name == "call_now");
+        Assert.Contains("no scheduler", callNow.Description);
+        string schema = callNow.JsonSchema.GetRawText();
         Assert.Contains("\"max_attempts\"", schema);
         Assert.Contains("\"brief\"", schema);
         Assert.Contains("\"ask\"", schema);
@@ -82,21 +82,6 @@ public class McpTests : IAsyncLifetime
         var (isError, text) = await Call("call_now", new() { ["type"] = "alarm", ["to"] = "mom" });
         Assert.True(isError);
         Assert.Contains("self", text);
-    }
-
-    [Fact]
-    public async Task A_weekly_schedule_passes_through_with_its_nested_repeat()
-    {
-        var (isError, text) = await Call("schedule_call", new()
-        {
-            ["type"] = "alarm",
-            ["to"] = "me",
-            ["repeat"] = new Dictionary<string, object?> { ["days"] = new[] { "weekdays" }, ["time"] = "05:30", ["tz"] = Policies.Chicago },
-        });
-        Assert.False(isError, text);
-        using var doc = JsonDocument.Parse(text);
-        Assert.StartsWith("s_", doc.RootElement.GetProperty("schedule_id").GetString());
-        Assert.Single(_h.Schedules.All);
     }
 
     [Fact]
@@ -256,7 +241,7 @@ public class SocketBackendTests
 
         var down = await tools.ListContacts();
         Assert.True(down.IsError);
-        Assert.Contains("not reachable", ((TextContentBlock)down.Content[0]).Text);
+        Assert.Contains("not running", ((TextContentBlock)down.Content[0]).Text);
 
         await using var server = new ControlServer(h.Paths.ControlSocket, h.Service.HandleAsync);
         server.Start();

@@ -42,7 +42,7 @@ internal sealed class Executor
         _listener = listener;
     }
 
-    /// <summary>How long after its fire time a call may still start (PR-SCHED-4).</summary>
+    /// <summary>How long after it was requested a call may still start (PR-SCHED-4), for example behind another call.</summary>
     public static TimeSpan Grace(CallType type) => type == CallType.Alarm ? TimeSpan.FromMinutes(15) : TimeSpan.FromMinutes(5);
 
     /// <summary>How long to wait for a PR-REG-9 re-register to succeed before dialing anyway.</summary>
@@ -53,14 +53,13 @@ internal sealed class Executor
         get { lock (_lock) return _currentCallId; }
     }
 
-    public CallRecord Create(string? scheduleId, CallType type, Target target, CallOptions options, ClipSet clips,
+    public CallRecord Create(CallType type, Target target, CallOptions options, ClipSet clips,
         string? text, DateTimeOffset fireTime, IEnumerable<string>? notes = null, Brief? brief = null)
     {
         var now = _time.GetUtcNow();
         var record = new CallRecord
         {
             CallId = NewId(now),
-            ScheduleId = scheduleId,
             Type = type,
             Contact = target.Contact,
             MaskedNumber = target.MaskedNumber,
@@ -452,7 +451,7 @@ internal sealed class Executor
             problem = $"contact '{r.Contact}' is no longer marked self; alarms only call self (PR-ALARM-5)";
             return false;
         }
-        // The operator may have changed the number since the call was scheduled.
+        // The operator may have changed the number since the call was requested.
         var fresh = PolicyGuard.Resolve(policy, match.Key, _phone.Server, out var error);
         if (fresh is null)
         {

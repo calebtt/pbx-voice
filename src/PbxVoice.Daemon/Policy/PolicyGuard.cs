@@ -5,7 +5,7 @@ using SipBot;
 namespace PbxVoice.Policy;
 
 /// <summary>
-/// The policy checks, enforced in the daemon at scheduling time and again at fire time
+/// The policy checks, enforced in the daemon when a call is requested and again before it dials
 /// (PR-SAFE-1 to PR-SAFE-4, PR-ALARM-5). The agent cannot change any of them.
 /// </summary>
 internal static class PolicyGuard
@@ -85,9 +85,31 @@ internal static class PolicyGuard
     {
         var zone = PolicyLoader.Zone(policy.Timezone);
         var localDate = TimeZoneInfo.ConvertTime(at, zone).Date;
-        var start = Scheduling.Recurrence.ResolveLocal(localDate, zone);
-        var end = Scheduling.Recurrence.ResolveLocal(localDate.AddDays(1), zone);
+        var start = ResolveLocal(localDate, zone);
+        var end = ResolveLocal(localDate.AddDays(1), zone);
         return (start, end);
+    }
+
+    /// <summary>
+    /// A local wall-clock time as an instant. A time skipped by a forward transition becomes the
+    /// first valid minute after it; a time repeated by a backward transition is its first occurrence.
+    /// </summary>
+    public static DateTimeOffset ResolveLocal(DateTime local, TimeZoneInfo zone)
+    {
+        local = DateTime.SpecifyKind(local, DateTimeKind.Unspecified);
+        if (zone.IsInvalidTime(local))
+        {
+            var t = new DateTime(local.Year, local.Month, local.Day, local.Hour, local.Minute, 0, DateTimeKind.Unspecified);
+            for (int i = 0; i < 24 * 60 && zone.IsInvalidTime(t); i++)
+                t = t.AddMinutes(1);
+            return new DateTimeOffset(t, zone.GetUtcOffset(t));
+        }
+        if (zone.IsAmbiguousTime(local))
+        {
+            var offset = zone.GetAmbiguousTimeOffsets(local).Max();
+            return new DateTimeOffset(local, offset);
+        }
+        return new DateTimeOffset(local, zone.GetUtcOffset(local));
     }
 
     /// <summary>"+15555550100" becomes "***0100". Short extensions are shown as they are.</summary>

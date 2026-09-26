@@ -5,7 +5,6 @@ using System.Text.RegularExpressions;
 using PbxVoice.Audio;
 using PbxVoice.Calls;
 using PbxVoice.Policy;
-using PbxVoice.Scheduling;
 
 namespace PbxVoice.Service;
 
@@ -22,12 +21,15 @@ internal sealed class HostStatus
     public string StateDirectory { get; init; } = "";
     public bool XaiKeyPresent { get; init; }
     public Func<(DateTimeOffset At, int? Status)?> LastPing { get; init; } = () => null;
+
+    /// <summary>Stops the daemon (the <c>shutdown</c> operation behind <c>pbx-voice stop</c>).</summary>
+    public Action? RequestStop { get; init; }
 }
 
 /// <summary>
-/// The operations behind <c>pbx-voice ctl</c> (and the MCP tools in a later version): schedule,
-/// call now, wait, list and cancel schedules, cancel a call, list and read call records, list
-/// contacts, and status (PR-API-1, PR-API-3).
+/// The operations behind <c>pbx-voice ctl</c> and the MCP tools: call now, wait, cancel a call,
+/// list and read call records, list contacts, and status (PR-API-1, PR-API-3). pbx-voice has no
+/// scheduler: the agent's own scheduler decides when to call <c>call_now</c>.
 /// </summary>
 internal sealed partial class PbxVoiceService
 {
@@ -36,19 +38,17 @@ internal sealed partial class PbxVoiceService
 
     private readonly TimeProvider _time;
     private readonly PolicyProvider _policy;
-    private readonly ScheduleStore _schedules;
     private readonly CallStore _calls;
     private readonly ClipStore _clips;
     private readonly Executor _executor;
     private readonly IPhoneLine _phone;
     private readonly HostStatus _host;
 
-    public PbxVoiceService(TimeProvider time, PolicyProvider policy, ScheduleStore schedules, CallStore calls,
+    public PbxVoiceService(TimeProvider time, PolicyProvider policy, CallStore calls,
         ClipStore clips, Executor executor, IPhoneLine phone, HostStatus host)
     {
         _time = time;
         _policy = policy;
-        _schedules = schedules;
         _calls = calls;
         _clips = clips;
         _executor = executor;
@@ -58,26 +58,23 @@ internal sealed partial class PbxVoiceService
 
     public static readonly string[] Operations =
     {
-        "schedule_call", "call_now", "wait_for_call", "list_schedules", "cancel_schedule",
-        "cancel_call", "list_calls", "get_call", "list_contacts", "status",
+        "call_now", "wait_for_call", "cancel_call", "list_calls", "get_call", "list_contacts", "status", "shutdown",
     };
 
     public Task<object> HandleAsync(string op, JsonElement args, CancellationToken ct) => op switch
     {
-        "schedule_call" => ScheduleCallAsync(args, ct),
         "call_now" => CallNowAsync(args, ct),
         "wait_for_call" => WaitForCallAsync(args, ct),
-        "list_schedules" => Task.FromResult(ListSchedules()),
-        "cancel_schedule" => Task.FromResult(CancelSchedule(args)),
         "cancel_call" => Task.FromResult(CancelCall(args)),
         "list_calls" => Task.FromResult(ListCalls(args)),
         "get_call" => Task.FromResult(GetCall(args)),
         "list_contacts" => Task.FromResult(ListContacts()),
         "status" => Task.FromResult(Status()),
+        "shutdown" => Task.FromResult(Shutdown(args)),
         _ => throw new ServiceError($"unknown operation '{op}'; known: {string.Join(", ", Operations)}"),
     };
 
-    // ---- schedule_call / call_now ------------------------------------------------------------
+    // ---- call_now ------------------------------------------------------------------------
 
     private sealed record Prepared(CallType Type, Target Target, CallOptions Options, string? Text, Brief? Brief);
 
@@ -118,73 +115,6 @@ internal sealed partial class PbxVoiceService
         return new Prepared(type, target, options, string.IsNullOrWhiteSpace(text) ? null : text.Trim(), brief);
     }
 
-    private async Task<object> ScheduleCallAsync(JsonElement args, CancellationToken ct)
-    {
-        var policy = _policy.Current;
-        var p = Prepare(args, policy);
-        var now = _time.GetUtcNow();
-
-        bool hasAt = args.TryGetProperty("at", out var atElement);
-        bool hasRepeat = args.TryGetProperty("repeat", out var repeatElement);
-        if (hasAt == hasRepeat)
-            throw new ServiceError("give exactly one of 'at' (one-off) or 'repeat' (weekly)");
-
-        DateTimeOffset firstFire;
-        RepeatSpec? repeat = null;
-        TimeZoneInfo zone;
-        if (hasAt)
-        {
-            (firstFire, zone) = ParseAt(atElement.GetString(), Str(args, "tz"));
-            if (firstFire < now - Executor.Grace(p.Type))
-                throw new ServiceError($"'at' is in the past ({firstFire:O})");
-        }
-        else
-        {
-            repeat = ParseRepeat(repeatElement);
-            zone = PolicyLoader.Zone(repeat.Tz);
-            var days = Recurrence.ParseDays(repeat.Days, out _)!;
-            Recurrence.TryParseTime(repeat.Time, out var time);
-            firstFire = Recurrence.NextWeekly(now, days, time, zone);
-        }
-
-        CheckTimeRules(policy, p, firstFire, now);
-        var (clips, notes) = await RenderClipsAsync(p, policy, TimeZoneInfo.ConvertTime(firstFire, zone), ct).ConfigureAwait(false);
-
-        var schedule = new Schedule
-        {
-            Id = NewId("s", now),
-            Type = p.Type,
-            To = Str(args, "to")!,
-            Contact = p.Target.Contact,
-            Self = p.Target.Self,
-            TargetUri = p.Target.Uri,
-            MaskedNumber = p.Target.MaskedNumber,
-            At = hasAt ? firstFire : null,
-            Repeat = repeat,
-            Text = p.Text,
-            Brief = p.Brief,
-            Options = p.Options,
-            Clips = clips,
-            Notes = notes,
-            CreatedAt = now,
-            NextFire = firstFire,
-        };
-        lock (_schedules.Sync)
-            _schedules.Add(schedule);
-
-        return new
-        {
-            schedule_id = schedule.Id,
-            next_fire = firstFire,
-            next_fire_local = TimeZoneInfo.ConvertTime(firstFire, zone).ToString("yyyy-MM-dd HH:mm zzz", CultureInfo.InvariantCulture),
-            contact = schedule.Contact,
-            masked_number = schedule.MaskedNumber,
-            options = schedule.Options,
-            clips = ClipSummary(clips),
-            notes,
-        };
-    }
-
     private async Task<object> CallNowAsync(JsonElement args, CancellationToken ct)
     {
         var policy = _policy.Current;
@@ -193,11 +123,11 @@ internal sealed partial class PbxVoiceService
         CheckTimeRules(policy, p, now, now);
         var zone = PolicyLoader.Zone(policy.Timezone);
         var (clips, notes) = await RenderClipsAsync(p, policy, TimeZoneInfo.ConvertTime(now, zone), ct).ConfigureAwait(false);
-        var record = _executor.Create(null, p.Type, p.Target, p.Options, clips, p.Text, now, notes, p.Brief);
+        var record = _executor.Create(p.Type, p.Target, p.Options, clips, p.Text, now, notes, p.Brief);
         return new { call_id = record.CallId, contact = record.Contact, masked_number = record.MaskedNumber, notes };
     }
 
-    /// <summary>Quiet hours (PR-SAFE-3) and the daily caps (PR-SAFE-4) at scheduling time.</summary>
+    /// <summary>Quiet hours (PR-SAFE-3) and the daily caps (PR-SAFE-4) when the call is requested.</summary>
     private void CheckTimeRules(PolicyFile policy, Prepared p, DateTimeOffset fire, DateTimeOffset now)
     {
         if (PolicyGuard.InQuietHours(policy, p.Target, fire))
@@ -211,58 +141,6 @@ internal sealed partial class PbxVoiceService
     }
 
     /// <summary>
-    /// Parses 'at'. A time with an offset (or Z) is exact. A time without one needs 'tz'; with
-    /// neither it is refused (PR-SCHED-1).
-    /// </summary>
-    internal static (DateTimeOffset Fire, TimeZoneInfo Zone) ParseAt(string? at, string? tz)
-    {
-        if (string.IsNullOrWhiteSpace(at))
-            throw new ServiceError("'at' must be an ISO 8601 time");
-        bool hasOffset = OffsetPattern().IsMatch(at.Trim());
-        if (hasOffset)
-        {
-            if (!DateTimeOffset.TryParse(at, CultureInfo.InvariantCulture, DateTimeStyles.None, out var exact))
-                throw new ServiceError($"'at' is not an ISO 8601 time: {at}");
-            var zone = tz is null ? TimeZoneInfo.CreateCustomTimeZone("offset", exact.Offset, "offset", "offset") : ZoneOrError(tz);
-            return (exact, zone);
-        }
-        if (tz is null)
-            throw new ServiceError("'at' has no UTC offset and no 'tz' was given; add an offset (e.g. -05:00) or an IANA 'tz'");
-        if (!DateTime.TryParse(at, CultureInfo.InvariantCulture, DateTimeStyles.None, out var local))
-            throw new ServiceError($"'at' is not an ISO 8601 time: {at}");
-        var z = ZoneOrError(tz);
-        return (Recurrence.ResolveLocal(local, z), z);
-    }
-
-    private static RepeatSpec ParseRepeat(JsonElement e)
-    {
-        if (e.ValueKind != JsonValueKind.Object)
-            throw new ServiceError("'repeat' must be an object: {\"days\": [...], \"time\": \"HH:mm\", \"tz\": \"Area/City\"}");
-        var days = e.TryGetProperty("days", out var d)
-            ? d.ValueKind == JsonValueKind.Array ? d.EnumerateArray().Select(x => x.GetString() ?? "").ToList() : new List<string> { d.GetString() ?? "" }
-            : new List<string>();
-        var spec = new RepeatSpec
-        {
-            Days = days,
-            Time = e.TryGetProperty("time", out var t) ? t.GetString() ?? "" : "",
-            Tz = e.TryGetProperty("tz", out var z) ? z.GetString() ?? "" : "",
-        };
-        if (Recurrence.ParseDays(spec.Days, out var dayError) is null)
-            throw new ServiceError(dayError!);
-        if (!Recurrence.TryParseTime(spec.Time, out _))
-            throw new ServiceError("repeat.time must be HH:mm");
-        if (spec.Tz.Length == 0)
-            throw new ServiceError("repeat.tz is required (an IANA zone such as America/Chicago)");
-        ZoneOrError(spec.Tz);
-        return spec;
-    }
-
-    private static TimeZoneInfo ZoneOrError(string id) =>
-        PolicyLoader.TryZone(id, out var zone) ? zone : throw new ServiceError($"unknown time zone '{id}'");
-
-    [GeneratedRegex(@"(Z|[+-]\d{2}:?\d{2})$", RegexOptions.IgnoreCase)]
-    private static partial Regex OffsetPattern();
-
     // ---- clip rendering ----------------------------------------------------------------------
 
     internal const string DefaultAlarmPrompt = "Good morning, it's {time}. Say 'I'm up' when you're awake.";
@@ -277,8 +155,8 @@ internal sealed partial class PbxVoiceService
     internal const string ConversationClosing = "I have to go now. {name} will follow up. Goodbye.";
 
     /// <summary>
-    /// Renders every clip when the call is scheduled (PR-SPEECH-1). An alarm whose prompt cannot
-    /// be rendered is still scheduled with the built-in wake tone, and the record says so
+    /// Renders every clip when the call is requested (PR-SPEECH-1). An alarm whose prompt cannot
+    /// be rendered is still placed with the built-in wake tone, and the record says so
     /// (PR-ALARM-6). A message needs its clips, so a rendering failure refuses the request.
     /// </summary>
     private async Task<(ClipSet Clips, List<string> Notes)> RenderClipsAsync(Prepared p, PolicyFile policy, DateTimeOffset localFire, CancellationToken ct)
@@ -383,41 +261,6 @@ internal sealed partial class PbxVoiceService
         return new { status = "in_progress", call_id = id, latest_attempt = record.Attempts.LastOrDefault(), next_attempt_at = record.NextAttemptAt };
     }
 
-    private object ListSchedules()
-    {
-        lock (_schedules.Sync)
-        {
-            return _schedules.All.Where(s => s.Status == "active").Select(s => new
-            {
-                schedule_id = s.Id,
-                type = s.Type,
-                contact = s.Contact,
-                masked_number = s.MaskedNumber,
-                at = s.At,
-                repeat = s.Repeat,
-                next_fire = s.NextFire,
-                options = s.Options,
-                notes = s.Notes,
-                preflight = s.Preflight,
-            }).ToList();
-        }
-    }
-
-    private object CancelSchedule(JsonElement args)
-    {
-        string id = Str(args, "schedule_id") ?? throw new ServiceError("'schedule_id' is required");
-        lock (_schedules.Sync)
-        {
-            var s = _schedules.Find(id) ?? throw new ServiceError($"no schedule '{id}'");
-            if (s.Status != "active")
-                throw new ServiceError($"schedule '{id}' is already {s.Status}");
-            s.Status = "cancelled";
-            s.NextFire = null;
-            _schedules.Save();
-        }
-        return new { ok = true, schedule_id = id };
-    }
-
     private object CancelCall(JsonElement args)
     {
         string id = Str(args, "call_id") ?? throw new ServiceError("'call_id' is required");
@@ -434,7 +277,7 @@ internal sealed partial class PbxVoiceService
         int limit = args.TryGetProperty("limit", out var l) && l.TryGetInt32(out var n) ? Math.Clamp(n, 1, 200) : 20;
         return _calls.SnapshotAll()
             .Where(r => r.CreatedAt >= since)
-            .OrderByDescending(r => r.FireTime)
+            .OrderByDescending(r => r.CreatedAt)
             .Take(limit)
             .Select(r => new
             {
@@ -444,7 +287,7 @@ internal sealed partial class PbxVoiceService
                 status = r.Status,
                 outcome = r.Outcome,
                 reason = r.Reason,
-                fire_time = r.FireTime,
+                created_at = r.CreatedAt,
                 completed_at = r.CompletedAt,
                 attempts = r.Attempts.Count,
                 ack_source = r.AckSource,
@@ -456,6 +299,22 @@ internal sealed partial class PbxVoiceService
     {
         string id = Str(args, "call_id") ?? throw new ServiceError("'call_id' is required");
         return CallView(_calls.Snapshot(id) ?? throw new ServiceError($"no call '{id}'"));
+    }
+
+    /// <summary>
+    /// Operator only: the MCP tools don't offer it. Refused while a call is in progress unless
+    /// forced; queued calls wait for the next start (and are missed after their grace window).
+    /// </summary>
+    private object Shutdown(JsonElement args)
+    {
+        if (_host.RequestStop is null)
+            throw new ServiceError("this daemon can't be stopped through the control socket");
+        bool force = args.TryGetProperty("force", out var f) && f.ValueKind == JsonValueKind.True;
+        if (_executor.CurrentCallId is { } current && !force)
+            throw new ServiceError($"a call is in progress ({current}); wait for it to finish, or stop with --force");
+        int pending = _calls.Open().Count(r => r.Status == CallStatus.Pending);
+        _host.RequestStop();
+        return new { stopping = true, pending_calls = pending };
     }
 
     private object ListContacts()
@@ -471,14 +330,6 @@ internal sealed partial class PbxVoiceService
         var (start, end) = PolicyGuard.Day(policy, now);
         var reg = _phone.Registration;
         var ping = _host.LastPing();
-        List<object> nextFires;
-        lock (_schedules.Sync)
-        {
-            nextFires = _schedules.All.Where(s => s.Status == "active" && s.NextFire is not null)
-                .OrderBy(s => s.NextFire).Take(5)
-                .Select(s => (object)new { schedule_id = s.Id, type = s.Type, contact = s.Contact, next_fire = s.NextFire, preflight = s.Preflight })
-                .ToList();
-        }
         var open = _calls.Open();
         return new
         {
@@ -489,7 +340,6 @@ internal sealed partial class PbxVoiceService
             dial_while_unregistered = policy.DialWhileUnregistered,
             current_call = _executor.CurrentCallId,
             pending_calls = open.Count(r => r.Status == CallStatus.Pending),
-            next_fires = nextFires,
             usage_today = new { attempts = _calls.AttemptsBetween(start, end), calls_per_day = policy.Limits.CallsPerDay },
             xai_key_present = _host.XaiKeyPresent,
             policy_error = _policy.LastError,
@@ -509,7 +359,6 @@ internal sealed partial class PbxVoiceService
     internal static object CallView(CallRecord r) => new
     {
         call_id = r.CallId,
-        schedule_id = r.ScheduleId,
         type = r.Type,
         contact = r.Contact,
         masked_number = r.MaskedNumber,
@@ -517,7 +366,6 @@ internal sealed partial class PbxVoiceService
         outcome = r.Outcome,
         reason = r.Reason,
         ack_source = r.AckSource,
-        fire_time = r.FireTime,
         created_at = r.CreatedAt,
         completed_at = r.CompletedAt,
         next_attempt_at = r.NextAttemptAt,

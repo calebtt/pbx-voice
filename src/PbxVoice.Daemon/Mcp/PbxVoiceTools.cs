@@ -5,19 +5,6 @@ using ModelContextProtocol.Server;
 
 namespace PbxVoice.Mcp;
 
-/// <summary>Weekly repeat for <c>schedule_call</c>.</summary>
-internal sealed class RepeatInput
-{
-    [Description("Days: mon..sun, or weekdays, weekends, daily. Example: [\"weekdays\"] or [\"mon\",\"wed\"].")]
-    public List<string> Days { get; set; } = new();
-
-    [Description("Local wall-clock time, HH:mm (24-hour). Example: \"05:30\".")]
-    public string Time { get; set; } = "";
-
-    [Description("IANA time zone, e.g. \"America/Chicago\". Required.")]
-    public string Tz { get; set; } = "";
-}
-
 /// <summary>One question in a conversation brief.</summary>
 internal sealed class AskInput
 {
@@ -62,13 +49,13 @@ internal sealed class OptionsInput
     [Description("Call again after no answer, busy, or (alarm) no acknowledgment. Default true; false means one attempt.")]
     public bool? Redial { get; set; }
 
-    [Description("Attempts in total. Defaults: alarm 5, message 2. Capped by policy.")]
+    [Description("Attempts in total. Defaults: alarm 5, message 2, conversation 2. Capped by policy.")]
     public int? MaxAttempts { get; set; }
 
-    [Description("Minutes between attempts. Defaults: alarm 3, message 10.")]
+    [Description("Minutes between attempts. Defaults: alarm 3, message 10, conversation 10.")]
     public int? RetryMinutes { get; set; }
 
-    [Description("Seconds to let it ring, counted from when it starts ringing. Defaults: alarm 45, message 30.")]
+    [Description("Seconds to let it ring, counted from when it starts ringing. Defaults: alarm 45, message 30, conversation 7.")]
     public int? RingSeconds { get; set; }
 
     [Description("Alarm only: minutes before calling back after the callee says \"snooze\". Default 10.")]
@@ -95,40 +82,21 @@ internal sealed class PbxVoiceTools
         _rate = rate;
     }
 
-    [McpServerTool(Name = "schedule_call", OpenWorld = true)]
+    [McpServerTool(Name = "call_now", OpenWorld = true)]
     [Description(
-        "Schedule a phone call that the pbx-voice daemon places later, through the user's own phone extension. " +
+        "Place a phone call now, through the pbx-voice daemon and the user's own phone extension. " +
         "type \"alarm\": a wake-up call to a contact marked self; it redials until the callee says \"I'm up\". " +
         "type \"message\": calls a contact, speaks `text` word for word, and asks them to say \"got it\". " +
         "type \"conversation\": a live AI voice call that follows `brief`: it can deliver a message, answer from the facts, and " +
         "ask questions, then returns the answers with the callee's words as evidence. " +
-        "Give exactly one of `at` (one-off) or `repeat` (weekly). Only schedule calls the user asked for, " +
-        "and put in `text` only what the user would say to that person directly. " +
-        "Returns schedule_id and next_fire, or an error from the operator's policy (unlisted contact, quiet hours, caps).")]
-    public Task<CallToolResult> ScheduleCall(
-        [Description("\"alarm\", \"message\", or \"conversation\".")] string type,
-        [Description("Contact name from list_contacts (or a number, only if the operator allows unlisted numbers).")] string to,
-        [Description("One-off time, ISO 8601 with a UTC offset, e.g. \"2026-10-06T05:30:00-05:00\". A time without an offset needs `tz`.")] string? at = null,
-        [Description("IANA time zone for an `at` without an offset.")] string? tz = null,
-        [Description("Weekly repeat instead of `at`.")] RepeatInput? repeat = null,
-        [Description("Message: the words to speak (required). Alarm: an optional wake-up prompt; {time} becomes the call time.")] string? text = null,
-        [Description("Conversation only: what the call is for (required for conversation).")] BriefInput? brief = null,
-        [Description("Optional per-call settings.")] OptionsInput? options = null,
-        CancellationToken ct = default)
-    {
-        if (_rate.TryPlace() is { } limited)
-            return Task.FromResult(Error(limited));
-        return Call("schedule_call", new { type, to, at, tz, repeat, text, brief, options }, ct);
-    }
-
-    [McpServerTool(Name = "call_now", OpenWorld = true)]
-    [Description(
-        "Place a call right away (same types and rules as schedule_call). Returns call_id at once; the call runs in the " +
-        "background. To get the result in this session, call wait_for_call with the call_id.")]
+        "pbx-voice has no scheduler: for a call at a later time, have your own scheduler (for example a routine) call this tool then. " +
+        "Only place calls the user asked for, and put in `text` only what the user would say to that person directly. " +
+        "Returns call_id at once; the call runs in the background. To get the result, call wait_for_call with the call_id. " +
+        "The operator's policy can refuse a call (unlisted contact, quiet hours, caps); the error says why.")]
     public Task<CallToolResult> CallNow(
         [Description("\"alarm\", \"message\", or \"conversation\".")] string type,
         [Description("Contact name from list_contacts.")] string to,
-        [Description("Message: the words to speak (required). Alarm: optional wake-up prompt.")] string? text = null,
+        [Description("Message: the words to speak (required). Alarm: an optional wake-up prompt; {time} becomes the time of the call.")] string? text = null,
         [Description("Conversation only: what the call is for (required for conversation).")] BriefInput? brief = null,
         [Description("Optional per-call settings.")] OptionsInput? options = null,
         CancellationToken ct = default)
@@ -141,24 +109,14 @@ internal sealed class PbxVoiceTools
     [McpServerTool(Name = "wait_for_call", ReadOnly = true)]
     [Description(
         "Wait until a call has its final outcome, up to timeout_sec (at most 900), and return the call record. " +
-        "If it is still running (for example an alarm waiting to redial), the result is status \"in_progress\" with the " +
-        "latest attempt. Never guess an outcome; check later with get_call. Report the outcome exactly as recorded.")]
+        "If it is still running (for example an alarm waiting to redial or snoozing; an alarm can take about 20 minutes), " +
+        "the result is status \"in_progress\" with the latest attempt: call wait_for_call again. Never guess an outcome. " +
+        "Report the outcome exactly as recorded.")]
     public Task<CallToolResult> WaitForCall(
         [Description("The call_id from call_now or list_calls.")] string call_id,
         [Description("Seconds to wait, 1-900. Default 300.")] int timeout_sec = 300,
         CancellationToken ct = default) =>
         Call("wait_for_call", new { call_id, timeout_sec }, ct);
-
-    [McpServerTool(Name = "list_schedules", ReadOnly = true)]
-    [Description("List active scheduled calls with their next fire time and the last pre-flight check.")]
-    public Task<CallToolResult> ListSchedules(CancellationToken ct = default) => Call("list_schedules", new { }, ct);
-
-    [McpServerTool(Name = "cancel_schedule", Destructive = true, Idempotent = true)]
-    [Description("Cancel a scheduled call so it does not fire again. Calls already running keep going; use cancel_call for those.")]
-    public Task<CallToolResult> CancelSchedule(
-        [Description("The schedule_id.")] string schedule_id,
-        CancellationToken ct = default) =>
-        Call("cancel_schedule", new { schedule_id }, ct);
 
     [McpServerTool(Name = "cancel_call", Destructive = true)]
     [Description("Cancel a pending call, stop one that is ringing, or hang up one in progress. Its outcome becomes \"cancelled\".")]
@@ -192,7 +150,7 @@ internal sealed class PbxVoiceTools
     public Task<CallToolResult> ListContacts(CancellationToken ct = default) => Call("list_contacts", new { }, ct);
 
     [McpServerTool(Name = "status", ReadOnly = true)]
-    [Description("Daemon health: SIP registration and last error, PBX reachability, the call in progress, next scheduled calls, today's usage against the cap, and whether speech services are configured.")]
+    [Description("Daemon health: SIP registration and last error, PBX reachability, the call in progress, today's usage against the cap, and whether speech services are configured.")]
     public Task<CallToolResult> Status(CancellationToken ct = default) => Call("status", new { }, ct);
 
     private async Task<CallToolResult> Call(string op, object args, CancellationToken ct)
@@ -209,8 +167,8 @@ internal sealed class PbxVoiceTools
 }
 
 /// <summary>
-/// Limits how fast the agent can place or schedule calls (plan: request-rate limiting on
-/// schedule_call and call_now), on top of the policy's daily cap.
+/// Limits how fast the agent can place calls (plan: request-rate limiting on call_now), on top
+/// of the policy's daily cap.
 /// </summary>
 internal sealed class PlacementRateLimiter
 {
@@ -235,9 +193,9 @@ internal sealed class PlacementRateLimiter
             while (_recent.Count > 0 && now - _recent.Peek() >= TimeSpan.FromHours(1))
                 _recent.Dequeue();
             if (_recent.Count >= _perHour)
-                return $"rate limit: at most {_perHour} calls scheduled or placed per hour";
+                return $"rate limit: at most {_perHour} calls placed per hour";
             if (_recent.Count(t => now - t < TimeSpan.FromMinutes(1)) >= _perMinute)
-                return $"rate limit: at most {_perMinute} calls scheduled or placed per minute";
+                return $"rate limit: at most {_perMinute} calls placed per minute";
             _recent.Enqueue(now);
             return null;
         }

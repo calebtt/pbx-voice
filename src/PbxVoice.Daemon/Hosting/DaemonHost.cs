@@ -102,7 +102,10 @@ internal sealed class DaemonHost
         using var phone = new SipPhoneLine(sipConfig, secrets.LocalSipPort, policy.Current.Register,
             () => policy.Current.InboundRejectStatus, vad, time);
         IVoiceSessionFactory? sessions = secrets.HasXaiKey ? new XaiVoiceSessionFactory(secrets["XAI_API_KEY"]!) : null;
-        var executor = new Executor(time, phone, policy, calls, clips, new ReplyListener(stt, time), sessions);
+        var prompts = new PromptProvider(paths.ConversationPrompt);
+        if (prompts.LastError is { } promptError)
+            Log.Warning("The conversation prompt file has an error ({Error}); conversation calls use the built-in prompt until it is fixed", promptError);
+        var executor = new Executor(time, phone, policy, calls, clips, new ReplyListener(stt, time), sessions, prompts);
         executor.Recover();
 
         (DateTimeOffset At, int? Status)? lastPing = null;

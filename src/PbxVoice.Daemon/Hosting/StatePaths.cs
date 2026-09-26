@@ -45,6 +45,9 @@ internal sealed class StatePaths
     }
     public string McpToken => Path.Combine(Root, "mcp-token");
 
+    /// <summary>The operator's conversation prompt (optional; the built-in default applies without it).</summary>
+    public string ConversationPrompt => Path.Combine(Root, "conversation-prompt.txt");
+
     public static StatePaths FromEnvironment() => new(ResolveRoot(Environment.GetEnvironmentVariable));
 
     public static string ResolveRoot(Func<string, string?> env)

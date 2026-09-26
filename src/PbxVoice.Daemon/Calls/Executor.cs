@@ -26,10 +26,14 @@ internal sealed class Executor
     private CancellationTokenSource? _currentCts;
     private string? _currentCallId;
 
+    /// <summary>The conversation prompt source (the operator's file or the built-in default).</summary>
+    public PromptProvider Prompts { get; }
+
     public Executor(TimeProvider time, IPhoneLine phone, PolicyProvider policy, CallStore calls, ClipStore clips, ReplyListener listener,
-        IVoiceSessionFactory? sessions = null)
+        IVoiceSessionFactory? sessions = null, PromptProvider? prompts = null)
     {
         _sessions = sessions;
+        Prompts = prompts ?? PromptProvider.BuiltInOnly();
         _time = time;
         _phone = phone;
         _policy = policy;
@@ -309,7 +313,7 @@ internal sealed class Executor
                 CallType.Message => await MessageFlow.RunAsync(ctx).ConfigureAwait(false),
                 CallType.Conversation => await ConversationFlow.RunAsync(ctx, new ConversationSettings(
                     _sessions, _time, policy.Speech.RealtimeModel, policy.Speech.RealtimeReasoning, policy.Speech.Voice,
-                    policy.Speech.Language, policy.DisplayName)).ConfigureAwait(false),
+                    policy.Speech.Language, policy.DisplayName) { Prompt = Prompts.Current }).ConfigureAwait(false),
                 _ => throw new NotSupportedException($"{r.Type} calls are not available in this version"),
             };
         }

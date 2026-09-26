@@ -37,7 +37,7 @@ internal sealed class AskInput
 /// <summary>What a conversation call is for.</summary>
 internal sealed class BriefInput
 {
-    [Description("One sentence: why the call is being made.")]
+    [Description("One sentence: why the call is being made. Everything in the brief, the goal and question hints included, may be repeated to the callee.")]
     public string Goal { get; set; } = "";
 
     [Description("Spoken word for word at the start and not interruptible. Give a message, questions (ask), or both.")]

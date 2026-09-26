@@ -493,8 +493,16 @@ internal sealed partial class PbxVoiceService
             usage_today = new { attempts = _calls.AttemptsBetween(start, end), calls_per_day = policy.Limits.CallsPerDay },
             xai_key_present = _host.XaiKeyPresent,
             policy_error = _policy.LastError,
+            conversation_prompt = ConversationPromptStatus(),
             state_directory = _host.StateDirectory,
         };
+    }
+
+    private object ConversationPromptStatus()
+    {
+        var prompts = _executor.Prompts;
+        var current = prompts.Current;
+        return new { source = current.Source, sha256 = current.Sha256, error = prompts.LastError };
     }
 
     /// <summary>A call record as tools show it: the dial target is masked and clip ids are left out.</summary>
@@ -529,6 +537,7 @@ internal sealed partial class PbxVoiceService
             end_claim = c.EndClaim,
             ended_by = c.EndedBy,
             session_open_ms = c.SessionOpenMs,
+            prompt = c.PromptSha256 is null ? null : new { source = c.PromptSource, sha256 = c.PromptSha256 },
             transcript = c.Transcript,
         } : null,
         notes = r.Notes,

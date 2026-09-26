@@ -73,6 +73,17 @@ A live voice call run by the Grok Voice realtime model, following a brief:
 
 If the voice session can't open within 3 s, a brief with a message falls back to a normal message call; a questions-only brief plays a short apology. A conversation redials (2 attempts, 10 minutes apart, 7 s ring) only if nobody answered. It costs xAI voice time (about $0.08 a minute at the time of writing); the policy caps minutes per call and per day.
 
+**The conversation prompt is a text file.**
+- The default is built in. `pbx-voice prompt` prints it.
+- To change it, save your version as `conversation-prompt.txt` in the state directory; `pbx-voice paths` shows where.
+  - The daemon reads the file before each call.
+  - An invalid edit is ignored: the last valid prompt stays in use, and `status` shows the error under `conversation_prompt`.
+  - Delete the file to go back to the default.
+- Each conversation's record includes the prompt's source and SHA-256, so any transcript can be traced to the exact prompt.
+- The brief is inserted as data, not as instructions: `{{call}}` and `{{brief}}` blocks, one field per line, with line breaks and block tags removed. Text in a brief can't add a heading or rule of its own.
+- Treat the prompt like code: keep it under version control, and put no secrets in it. Assume a callee can get the model to repeat it.
+- The limits that matter don't depend on the prompt. The daemon enforces the disclosure, the time limit, the record-only tools, and the evidence checks.
+
 ## Setup
 
 Requires the .NET 8 SDK to build, a SIP extension on your PBX (a dedicated one is best), and a host that can run ONNX Runtime: glibc-based Linux on x64 or arm64 (Alpine and other musl systems are not supported).

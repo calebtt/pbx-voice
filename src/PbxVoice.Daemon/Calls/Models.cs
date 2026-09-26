@@ -211,6 +211,9 @@ internal sealed class CallRecord
 internal sealed class ConversationRecord
 {
     public Brief Brief { get; set; } = new();
+    /// <summary>Which conversation prompt the call used: <c>built_in</c> or <c>file</c>, and its SHA-256.</summary>
+    public string? PromptSource { get; set; }
+    public string? PromptSha256 { get; set; }
     public int? SessionOpenMs { get; set; }
     public bool MessageDelivered { get; set; }
     public bool? MessageConfirmed { get; set; }

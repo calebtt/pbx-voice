@@ -20,6 +20,9 @@ internal sealed record ConversationSettings(
 
     /// <summary>After end_call, how long to let the last words play before hanging up.</summary>
     public TimeSpan EndDrain { get; init; } = TimeSpan.FromSeconds(6);
+
+    /// <summary>The conversation prompt for this call.</summary>
+    public PromptTemplate Prompt { get; init; } = PromptTemplate.BuiltIn;
 }
 
 /// <summary>
@@ -41,8 +44,14 @@ internal static class ConversationFlow
 
         // 1. Open the session while the disclosure plays (PR-CONV-3, PR-SAFE-6).
         IVoiceSession? session = settings.Sessions?.Create();
+        var prompt = settings.Prompt;
+        ctx.Update((c, _) =>
+        {
+            c.Conversation!.PromptSource = prompt.Source;
+            c.Conversation.PromptSha256 = prompt.Sha256;
+        });
         var config = new VoiceSessionConfig(
-            Instructions.Build(brief, call.Contact, call.Self, settings.DisplayName, brief.MaxMinutes),
+            Instructions.Build(prompt, brief, call.Contact, call.Self, settings.DisplayName, brief.MaxMinutes),
             settings.Voice, settings.Model, settings.ReasoningEffort, settings.Language, Instructions.Tools(brief));
         using var openTimeout = new CancellationTokenSource(settings.OpenTimeout, settings.Time);
         using var openCts = CancellationTokenSource.CreateLinkedTokenSource(ctx.Ct, openTimeout.Token);

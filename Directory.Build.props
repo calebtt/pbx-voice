@@ -1,0 +1,10 @@
+<Project>
+  <!--
+    MinimalSileroVad (external/MinimalSileroVad) picks the CUDA build of ONNX Runtime on Linux by
+    default. The daemon runs Silero on the CPU, and the CUDA package is large and fails to load
+    on hosts without CUDA, so always use the CPU package.
+  -->
+  <PropertyGroup>
+    <UseCudaOnnxRuntime>false</UseCudaOnnxRuntime>
+  </PropertyGroup>
+</Project>

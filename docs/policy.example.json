@@ -1,0 +1,61 @@
+{
+  // Copy to the state directory as policy.json (`pbx-voice paths` shows where) and edit.
+  // The agent can read this file through list_contacts and status, but cannot change it.
+
+  // IANA zone for daily caps and for {time} in calls placed with call_now.
+  "timezone": "America/Chicago",
+
+  // Who the calls are made for. Calls to contacts that are not "self" start with:
+  // "This is an automated assistant calling on behalf of <display_name>..."
+  "display_name": "Alex",
+
+  // Everyone the daemon may call. Placeholder numbers; use your own.
+  // Alarms only call contacts with "self": true.
+  "contacts": {
+    "me":  { "number": "+15555550100", "self": true },
+    "mom": { "number": "+15555550101" }
+  },
+
+  // Off: the agent can only call the contacts above.
+  "allow_unlisted_numbers": false,
+
+  // No calls to contacts that are not "self" inside this window.
+  "quiet_hours": { "start": "21:00", "end": "08:00", "tz": "America/Chicago", "applies_to": "non_self" },
+
+  "limits": {
+    "calls_per_day": 20,
+    "conversation_minutes_per_day": 30,
+    "max_conversation_minutes": 5,
+    "max_alarm_attempts": 10,
+    "max_message_attempts": 3,
+    "max_ring_seconds": 90,
+    "min_retry_minutes": 1
+  },
+
+  // Whole-utterance matches (a phrase inside a longer sentence does not count).
+  "phrases": {
+    "awake":   ["i'm up", "i am up", "i'm awake", "awake"],
+    "snooze":  ["snooze", "five more minutes", "ten more minutes"],
+    "confirm": ["got it", "okay", "ok", "yes", "thanks", "thank you"],
+    "repeat":  ["repeat", "say that again", "what"]
+  },
+
+  // xAI voice and language for rendered clips.
+  "speech": { "voice": "eve", "language": "en", "speed": 1.0 },
+
+  // Register the extension. Keep this on unless outbound calls are known to work unregistered.
+  "register": true,
+
+  // Dial even while registration is down. Turn off for a PBX that refuses calls from an
+  // unregistered extension; the daemon then waits for registration during the ring time.
+  "dial_while_unregistered": true,
+
+  // Cancel a call when neither ringing nor an answer arrives this long after dialing.
+  "setup_limit_seconds": 7,
+
+  // Every inbound call gets this final response so the PBX sends the caller onward.
+  // On VitalPBX, 480 goes to the extension's voicemail ("unavailable" greeting).
+  "inbound_reject_status": 480,
+
+  "retention_days": 30
+}

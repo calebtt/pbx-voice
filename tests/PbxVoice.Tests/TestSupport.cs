@@ -44,11 +44,38 @@ internal sealed class FakeCall : IActiveCall
         HangUpDuringPause = hangUpDuringPause;
     }
 
+    private readonly TaskCompletionSource _ended = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
     public bool HangUpDuringPause { get; }
     public List<string> Played { get; } = new();
     public int Captures { get; private set; }
     public bool HungUpByUs { get; private set; }
     public bool IsUp { get; private set; } = true;
+    public Task Ended => _ended.Task;
+
+    // Streaming (conversation calls).
+    public Action<byte[]>? Stream { get; private set; }
+    public int AudioBytesPlayed { get; private set; }
+    public int PlaybackClears { get; private set; }
+    public bool Pending { get; set; }
+    public bool PlaybackPending => Pending;
+    public void StartStreaming(Action<byte[]> onCalleeAudio) => Stream = onCalleeAudio;
+    public void StopStreaming() => Stream = null;
+    public void EnqueueAudio(ReadOnlySpan<byte> pcm) => AudioBytesPlayed += pcm.Length;
+    public void ClearPlayback()
+    {
+        PlaybackClears++;
+        Pending = false;
+    }
+
+    /// <summary>The callee hangs up now.</summary>
+    public void CalleeHangsUp() => Down();
+
+    private void Down()
+    {
+        IsUp = false;
+        _ended.TrySetResult();
+    }
 
     public Task<PlayResult> PlayAsync(Clip clip, CancellationToken ct)
     {
@@ -59,7 +86,7 @@ internal sealed class FakeCall : IActiveCall
         Played.Add(clip.Id);
         if (_hangUpDuringPlay == Played.Count)
         {
-            IsUp = false;
+            Down();
             return Task.FromResult(new PlayResult(PlayEnd.HungUp, _playedBeforeHangUp));
         }
         return Task.FromResult(new PlayResult(PlayEnd.Completed, clip.Duration));
@@ -72,14 +99,14 @@ internal sealed class FakeCall : IActiveCall
             return Task.FromResult(Replies.HungUp());
         var capture = _captures.Count > 0 ? _captures.Dequeue() : Replies.Silence();
         if (capture.End == CaptureEnd.HungUp)
-            IsUp = false;
+            Down();
         return Task.FromResult(capture);
     }
 
     public Task<bool> PauseAsync(TimeSpan duration, CancellationToken ct)
     {
         if (HangUpDuringPause)
-            IsUp = false;
+            Down();
         return Task.FromResult(IsUp);
     }
 
@@ -87,7 +114,7 @@ internal sealed class FakeCall : IActiveCall
     {
         if (IsUp)
             HungUpByUs = true;
-        IsUp = false;
+        Down();
         return Task.CompletedTask;
     }
 
@@ -190,7 +217,8 @@ internal sealed class Harness : IDisposable
         Clips = new ClipStore(Paths.Clips, Tts);
         Calls = new CallStore(Paths.Calls);
         Schedules = new ScheduleStore(Paths.Schedules);
-        Executor = new Executor(Time, Phone, Policy, Calls, Clips, new ReplyListener(Stt, Time, TimeSpan.FromSeconds(3)));
+        Executor = new Executor(Time, Phone, Policy, Calls, Clips, new ReplyListener(Stt, Time, TimeSpan.FromSeconds(3)), Sessions,
+            new Conversation.PromptProvider(Paths.ConversationPrompt));
         Service = new PbxVoiceService(Time, Policy, Schedules, Calls, Clips, Executor, Phone,
             new HostStatus { Version = "test", StateDirectory = Dir, XaiKeyPresent = true });
     }
@@ -201,6 +229,7 @@ internal sealed class Harness : IDisposable
     public FakePhone Phone { get; } = new();
     public FakeStt Stt { get; } = new();
     public FakeTts Tts { get; } = new();
+    public FakeVoiceSessionFactory Sessions { get; } = new();
     public PolicyProvider Policy { get; }
     public ClipStore Clips { get; }
     public CallStore Calls { get; }

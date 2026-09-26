@@ -16,6 +16,7 @@ const string Usage = """
       pbx-voice mcp-stdio                 MCP server on stdin/stdout, forwarding to the running daemon
       pbx-voice mcp-token                 print the MCP bearer token and endpoint for the agent's config
       pbx-voice paths                     show where state, policy, and secrets live
+      pbx-voice prompt                    print the built-in conversation prompt (a starting point for your own)
       pbx-voice selftest                  check that this host can run the daemon (ONNX Runtime, Silero VAD)
       pbx-voice version
 
@@ -61,6 +62,7 @@ try
             Console.WriteLine($"secrets:         {paths.Secrets} (optional; the environment wins)");
             Console.WriteLine($"control socket:  {paths.ControlSocket}");
             Console.WriteLine($"mcp token:       {paths.McpToken}");
+            Console.WriteLine($"prompt:          {paths.ConversationPrompt} (optional; the built-in prompt applies without it)");
             Console.WriteLine($"locks:           {StatePaths.LocksDirectory(Environment.GetEnvironmentVariable)}");
             return 0;
         }
@@ -83,6 +85,9 @@ try
             Console.WriteLine($"header:   Authorization: Bearer {File.ReadAllText(paths.McpToken).Trim()}");
             return 0;
         }
+        case "prompt":
+            Console.Write(PbxVoice.Conversation.PromptTemplate.BuiltInFile);
+            return 0;
         case "selftest":
             return SelfTest.Run(Console.Out);
         case "version" or "--version":

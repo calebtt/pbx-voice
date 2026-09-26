@@ -44,6 +44,14 @@ public class McpTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task A_taken_port_fails_with_the_IOException_the_daemon_reports()
+    {
+        var tools = new PbxVoiceTools(new ServiceBackend(_h.Service), new PlacementRateLimiter(_h.Time));
+        var taken = new IPEndPoint(IPAddress.Loopback, _front.Endpoint.Port);
+        await Assert.ThrowsAsync<IOException>(() => McpHttpFront.StartAsync(taken, Token, tools, CancellationToken.None));
+    }
+
+    [Fact]
     public async Task The_ten_tools_are_listed_with_descriptions()
     {
         var tools = await _client.ListToolsAsync();
@@ -55,6 +63,8 @@ public class McpTests : IAsyncLifetime
         string schema = schedule.JsonSchema.GetRawText();
         Assert.Contains("\"repeat\"", schema);
         Assert.Contains("\"max_attempts\"", schema);
+        Assert.Contains("\"brief\"", schema);
+        Assert.Contains("\"ask\"", schema);
     }
 
     [Fact]
@@ -105,6 +115,29 @@ public class McpTests : IAsyncLifetime
         Assert.Equal("none", options.Ack);
         Assert.Equal(1, options.MaxAttempts);
         Assert.Equal(20, options.RingSeconds);
+    }
+
+    [Fact]
+    public async Task A_conversation_brief_passes_through_with_its_questions()
+    {
+        var (isError, text) = await Call("call_now", new()
+        {
+            ["type"] = "conversation",
+            ["to"] = "mom",
+            ["brief"] = new Dictionary<string, object?>
+            {
+                ["goal"] = "Find out when the plumber is coming.",
+                ["facts"] = new[] { "The leak is under the sink." },
+                ["ask"] = new[] { new Dictionary<string, object?> { ["name"] = "visit_time", ["question"] = "When is the plumber coming?", ["hint"] = "day and time window" } },
+                ["max_minutes"] = 2,
+            },
+        });
+        Assert.False(isError, text);
+        var id = JsonDocument.Parse(text).RootElement.GetProperty("call_id").GetString()!;
+        var brief = _h.Record(id).Conversation!.Brief;
+        Assert.Equal("visit_time", brief.Ask.Single().Name);
+        Assert.Equal("day and time window", brief.Ask.Single().Hint);
+        Assert.Equal(2, brief.MaxMinutes);
     }
 
     [Fact]

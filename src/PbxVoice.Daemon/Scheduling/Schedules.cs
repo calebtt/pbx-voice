@@ -36,6 +36,7 @@ internal sealed class Schedule
     public DateTimeOffset? At { get; set; }
     public RepeatSpec? Repeat { get; set; }
     public string? Text { get; set; }
+    public Brief? Brief { get; set; }
     public CallOptions Options { get; set; } = new();
     public ClipSet Clips { get; set; } = new();
     public List<string> Notes { get; set; } = new();

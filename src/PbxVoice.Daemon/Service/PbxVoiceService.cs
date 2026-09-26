@@ -79,7 +79,7 @@ internal sealed partial class PbxVoiceService
 
     // ---- schedule_call / call_now ------------------------------------------------------------
 
-    private sealed record Prepared(CallType Type, Target Target, CallOptions Options, string? Text);
+    private sealed record Prepared(CallType Type, Target Target, CallOptions Options, string? Text, Brief? Brief);
 
     private Prepared Prepare(JsonElement args, PolicyFile policy)
     {
@@ -88,8 +88,8 @@ internal sealed partial class PbxVoiceService
             "alarm" => CallType.Alarm,
             "message" => CallType.Message,
             "conversation" => CallType.Conversation,
-            null => throw new ServiceError("'type' is required: alarm or message"),
-            var other => throw new ServiceError($"unknown type '{other}': use alarm or message"),
+            null => throw new ServiceError("'type' is required: alarm, message, or conversation"),
+            var other => throw new ServiceError($"unknown type '{other}': use alarm, message, or conversation"),
         };
         var target = PolicyGuard.Resolve(policy, Str(args, "to") ?? "", _phone.Server, out var error)
                      ?? throw new ServiceError(error!);
@@ -106,7 +106,16 @@ internal sealed partial class PbxVoiceService
         var options = CallOptions.Resolve(type, overrides, policy.Limits, out var optionsError);
         if (optionsError is not null)
             throw new ServiceError(optionsError);
-        return new Prepared(type, target, options, string.IsNullOrWhiteSpace(text) ? null : text.Trim());
+
+        Brief? brief = null;
+        if (type == CallType.Conversation)
+        {
+            JsonElement? briefElement = args.TryGetProperty("brief", out var b) ? b : null;
+            brief = BriefValidator.Parse(briefElement, policy.Limits, out var briefError) ?? throw new ServiceError(briefError!);
+            if (text is not null)
+                throw new ServiceError("a conversation takes its words from 'brief' (message, facts, ask), not 'text'");
+        }
+        return new Prepared(type, target, options, string.IsNullOrWhiteSpace(text) ? null : text.Trim(), brief);
     }
 
     private async Task<object> ScheduleCallAsync(JsonElement args, CancellationToken ct)
@@ -138,7 +147,7 @@ internal sealed partial class PbxVoiceService
             firstFire = Recurrence.NextWeekly(now, days, time, zone);
         }
 
-        CheckTimeRules(policy, p.Target, firstFire, now);
+        CheckTimeRules(policy, p, firstFire, now);
         var (clips, notes) = await RenderClipsAsync(p, policy, TimeZoneInfo.ConvertTime(firstFire, zone), ct).ConfigureAwait(false);
 
         var schedule = new Schedule
@@ -153,6 +162,7 @@ internal sealed partial class PbxVoiceService
             At = hasAt ? firstFire : null,
             Repeat = repeat,
             Text = p.Text,
+            Brief = p.Brief,
             Options = p.Options,
             Clips = clips,
             Notes = notes,
@@ -180,21 +190,24 @@ internal sealed partial class PbxVoiceService
         var policy = _policy.Current;
         var p = Prepare(args, policy);
         var now = _time.GetUtcNow();
-        CheckTimeRules(policy, p.Target, now, now);
+        CheckTimeRules(policy, p, now, now);
         var zone = PolicyLoader.Zone(policy.Timezone);
         var (clips, notes) = await RenderClipsAsync(p, policy, TimeZoneInfo.ConvertTime(now, zone), ct).ConfigureAwait(false);
-        var record = _executor.Create(null, p.Type, p.Target, p.Options, clips, p.Text, now, notes);
+        var record = _executor.Create(null, p.Type, p.Target, p.Options, clips, p.Text, now, notes, p.Brief);
         return new { call_id = record.CallId, contact = record.Contact, masked_number = record.MaskedNumber, notes };
     }
 
-    /// <summary>Quiet hours (PR-SAFE-3) and the daily cap (PR-SAFE-4) at scheduling time.</summary>
-    private void CheckTimeRules(PolicyFile policy, Target target, DateTimeOffset fire, DateTimeOffset now)
+    /// <summary>Quiet hours (PR-SAFE-3) and the daily caps (PR-SAFE-4) at scheduling time.</summary>
+    private void CheckTimeRules(PolicyFile policy, Prepared p, DateTimeOffset fire, DateTimeOffset now)
     {
-        if (PolicyGuard.InQuietHours(policy, target, fire))
-            throw new ServiceError($"{fire:O} is inside quiet hours for '{target.Contact}'");
+        if (PolicyGuard.InQuietHours(policy, p.Target, fire))
+            throw new ServiceError($"{fire:O} is inside quiet hours for '{p.Target.Contact}'");
         var (start, end) = PolicyGuard.Day(policy, now);
         if (fire < end && _calls.AttemptsBetween(start, end) >= policy.Limits.CallsPerDay)
             throw new ServiceError($"the daily call cap ({policy.Limits.CallsPerDay}) is already reached for today");
+        if (p.Brief is { } brief && fire < end
+            && _calls.ConversationSecondsBetween(start, end) / 60 + brief.MaxMinutes > policy.Limits.ConversationMinutesPerDay)
+            throw new ServiceError($"this conversation could exceed today's conversation minutes ({policy.Limits.ConversationMinutesPerDay})");
     }
 
     /// <summary>
@@ -259,6 +272,9 @@ internal sealed partial class PbxVoiceService
     internal const string ConfirmPrompt = "Please say 'got it' to confirm, or 'repeat' to hear it again.";
     internal const string MessageClosing = "Thanks. Goodbye.";
     internal const string Disclosure = "Hello. This is an automated assistant calling on behalf of {name}. A short spoken reply may be transcribed.";
+    internal const string ConversationDisclosure = "Hello. This is an automated assistant calling on behalf of {name}. This call is transcribed.";
+    internal const string Apology = "I'm sorry, I can't continue this call right now. {name} will call you back. Goodbye.";
+    internal const string ConversationClosing = "I have to go now. {name} will follow up. Goodbye.";
 
     /// <summary>
     /// Renders every clip when the call is scheduled (PR-SPEECH-1). An alarm whose prompt cannot
@@ -302,6 +318,23 @@ internal sealed partial class PbxVoiceService
                     clips.SnoozeAck = await Render(SnoozeAck.Replace("{minutes}", p.Options.SnoozeMinutes.ToString(CultureInfo.InvariantCulture)), "snooze", required: false).ConfigureAwait(false);
             }
         }
+        else if (p.Type == CallType.Conversation)
+        {
+            var brief = p.Brief!;
+            if (!p.Target.Self)
+                clips.Disclosure = await Render(ConversationDisclosure.Replace("{name}", policy.DisplayName), "disclosure", required: true).ConfigureAwait(false);
+            if (brief.Message is { } message)
+            {
+                // For the fallback to the message flow if the voice session cannot open (PR-CONV-3).
+                clips.Message = await Render(message, "message", required: true).ConfigureAwait(false);
+                clips.ConfirmPrompt = await Render(ConfirmPrompt, "confirmation prompt", required: true).ConfigureAwait(false);
+            }
+            else
+            {
+                clips.Apology = await Render(Apology.Replace("{name}", policy.DisplayName), "apology", required: true).ConfigureAwait(false);
+            }
+            clips.Closing = await Render(ConversationClosing.Replace("{name}", policy.DisplayName), "closing", required: false).ConfigureAwait(false);
+        }
         else
         {
             clips.Message = await Render(p.Text!, "message", required: true).ConfigureAwait(false);
@@ -327,6 +360,7 @@ internal sealed partial class PbxVoiceService
             message = Kind(c.Message),
             confirm_prompt = Kind(c.ConfirmPrompt),
             disclosure = Kind(c.Disclosure),
+            apology = Kind(c.Apology),
         };
     }
 
@@ -459,8 +493,16 @@ internal sealed partial class PbxVoiceService
             usage_today = new { attempts = _calls.AttemptsBetween(start, end), calls_per_day = policy.Limits.CallsPerDay },
             xai_key_present = _host.XaiKeyPresent,
             policy_error = _policy.LastError,
+            conversation_prompt = ConversationPromptStatus(),
             state_directory = _host.StateDirectory,
         };
+    }
+
+    private object ConversationPromptStatus()
+    {
+        var prompts = _executor.Prompts;
+        var current = prompts.Current;
+        return new { source = current.Source, sha256 = current.Sha256, error = prompts.LastError };
     }
 
     /// <summary>A call record as tools show it: the dial target is masked and clip ids are left out.</summary>
@@ -484,6 +526,20 @@ internal sealed partial class PbxVoiceService
         billed_seconds = r.BilledSeconds,
         reregister = r.Reregister,
         attempts = r.Attempts,
+        conversation = r.Conversation is { } c ? new
+        {
+            brief = c.Brief,
+            answers = c.Answers,
+            callee_questions = c.CalleeQuestions,
+            message_delivered = c.MessageDelivered,
+            message_confirmed = c.MessageConfirmed,
+            model_reported_confirmation = c.ModelReportedConfirmation,
+            end_claim = c.EndClaim,
+            ended_by = c.EndedBy,
+            session_open_ms = c.SessionOpenMs,
+            prompt = c.PromptSha256 is null ? null : new { source = c.PromptSource, sha256 = c.PromptSha256 },
+            transcript = c.Transcript,
+        } : null,
         notes = r.Notes,
     };
 

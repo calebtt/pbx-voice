@@ -83,6 +83,12 @@ internal sealed class SpeechSettings
     public string Voice { get; set; } = "eve";
     public string Language { get; set; } = "en";
     public double Speed { get; set; } = 1.0;
+
+    /// <summary>Grok Voice model for conversation calls.</summary>
+    public string RealtimeModel { get; set; } = "grok-voice-latest";
+
+    /// <summary>Realtime reasoning effort: <c>none</c> answers fastest (about 1 s after the callee stops); <c>high</c> thinks longer.</summary>
+    public string RealtimeReasoning { get; set; } = "none";
 }
 
 internal static class PolicyLoader

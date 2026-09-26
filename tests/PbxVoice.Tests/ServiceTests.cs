@@ -105,7 +105,7 @@ public class ServiceTests
     {
         using var h = new Harness();
         Assert.Contains("not an option", await Refused(h, "call_now", new { type = "message", to = "me", text = "Hi.", options = new { snooze_minutes = 5 } }));
-        Assert.Contains("not available", await Refused(h, "call_now", new { type = "conversation", to = "me" }));
+        Assert.Contains("brief", await Refused(h, "call_now", new { type = "conversation", to = "me" }));
         Assert.Contains("unknown operation", await Refused(h, "edit_policy", new { }));
     }
 

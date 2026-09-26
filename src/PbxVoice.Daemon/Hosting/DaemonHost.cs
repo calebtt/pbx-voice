@@ -2,6 +2,7 @@ using System.Reflection;
 using PbxVoice.Audio;
 using PbxVoice.Calls;
 using PbxVoice.Control;
+using PbxVoice.Conversation;
 using PbxVoice.Mcp;
 using PbxVoice.Policy;
 using PbxVoice.Scheduling;
@@ -100,7 +101,11 @@ internal sealed class DaemonHost
         var schedules = new ScheduleStore(paths.Schedules);
         using var phone = new SipPhoneLine(sipConfig, secrets.LocalSipPort, policy.Current.Register,
             () => policy.Current.InboundRejectStatus, vad, time);
-        var executor = new Executor(time, phone, policy, calls, clips, new ReplyListener(stt, time));
+        IVoiceSessionFactory? sessions = secrets.HasXaiKey ? new XaiVoiceSessionFactory(secrets["XAI_API_KEY"]!) : null;
+        var prompts = new PromptProvider(paths.ConversationPrompt);
+        if (prompts.LastError is { } promptError)
+            Log.Warning("The conversation prompt file has an error ({Error}); conversation calls use the built-in prompt until it is fixed", promptError);
+        var executor = new Executor(time, phone, policy, calls, clips, new ReplyListener(stt, time), sessions, prompts);
         executor.Recover();
 
         (DateTimeOffset At, int? Status)? lastPing = null;
@@ -113,7 +118,15 @@ internal sealed class DaemonHost
         };
         var service = new PbxVoiceService(time, policy, schedules, calls, clips, executor, phone, host);
         await using var control = new ControlServer(paths.ControlSocket, service.HandleAsync);
-        control.Start();
+        try
+        {
+            control.Start();
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or ArgumentException or System.Net.Sockets.SocketException or IOException)
+        {
+            Log.Error("Cannot open the control socket {Path}: {Error}", paths.ControlSocket, ex.Message);
+            return 5;
+        }
 
         // The agent's interface (PR-API-1, PR-SAFE-8).
         McpHttpFront? mcp = null;
@@ -134,7 +147,17 @@ internal sealed class DaemonHost
                 Log.Warning("MCP listens on {Address}, which is not loopback: put it behind an HTTPS reverse proxy (deployment mode B)", endpoint);
             string token = McpHttpFront.LoadOrCreateToken(paths.McpToken);
             var tools = new PbxVoiceTools(new ServiceBackend(service), new PlacementRateLimiter(time));
-            mcp = await McpHttpFront.StartAsync(endpoint, token, tools, stop).ConfigureAwait(false);
+            try
+            {
+                mcp = await McpHttpFront.StartAsync(endpoint, token, tools, stop).ConfigureAwait(false);
+            }
+            catch (IOException ex)
+            {
+                // Kestrel reports a taken port as an IOException wrapping AddressInUseException.
+                Log.Error("Cannot listen for MCP on {Address}: {Error}. Stop whatever is using it, or set PBX_VOICE_MCP_LISTEN to another host:port (or off)",
+                    endpoint, ex.InnerException?.Message ?? ex.Message);
+                return 5;
+            }
             Log.Information("MCP front on {Endpoint} (bearer token in {TokenFile})", mcp.Endpoint, paths.McpToken);
         }
         await using var mcpLifetime = mcp;
@@ -187,7 +210,7 @@ internal sealed class DaemonHost
             due = schedules.CollectDue(now);
         foreach (var (s, fire) in due)
         {
-            var record = executor.Create(s.Id, s.Type, s.ToTarget(), s.Options, s.Clips, s.Text, fire, s.Notes);
+            var record = executor.Create(s.Id, s.Type, s.ToTarget(), s.Options, s.Clips, s.Text, fire, s.Notes, s.Brief);
             Log.Information("Schedule {ScheduleId} fired for {Fire:O}: call {CallId}", s.Id, fire, record.CallId);
         }
     }

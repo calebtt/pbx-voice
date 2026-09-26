@@ -6,9 +6,9 @@ An agent (a Grok Bot, or any other MCP client) schedules a call. A long-lived da
 
 | Type | Example | Status |
 |---|---|---|
-| `alarm` | Call me at 05:30 on weekdays until I say "I'm up" | Available (daemon and `ctl`) |
-| `message` | Call Mom and tell her my flight lands at 15:40 | Available (daemon and `ctl`) |
-| `conversation` | Ask the landlord when the plumber is coming and bring back the answer | Planned |
+| `alarm` | Call me at 05:30 on weekdays until I say "I'm up" | Available |
+| `message` | Call Mom and tell her my flight lands at 15:40 | Available |
+| `conversation` | Ask the landlord when the plumber is coming and bring back the answer | Available |
 
 Agents use it through MCP (Streamable HTTP, or a stdio shim); operators can also use `pbx-voice ctl`.
 
@@ -37,6 +37,52 @@ Alarms only call contacts marked `self`. Outcomes: `awake`, `played`, `not_ackno
 ### Message
 
 Plays a pause, then (for contacts that are not `self`) a disclosure that this is an automated assistant calling on your behalf, then the message. With `ack: voice` (the default) it asks for "got it" and replays on "repeat" (up to 3 times). It redials only when nobody answered (2 attempts, 10 minutes apart, 30 s ring), never after the message has played. Outcomes: `confirmed`, `played`, `played_unconfirmed`, `not_answered` (including `hung_up_early`), `missed`, `failed`.
+
+### Conversation
+
+A live voice call run by the Grok Voice realtime model, following a brief:
+
+```json
+{
+  "type": "conversation",
+  "to": "landlord",
+  "brief": {
+    "goal": "Find out when the plumber is coming to fix the kitchen sink.",
+    "message": "Hi, this is about the leak under the kitchen sink.",
+    "facts": ["The leak is under the kitchen sink.", "Alex is home after 4 pm on weekdays."],
+    "ask": [
+      { "name": "visit_time", "question": "When is the plumber coming?", "hint": "day and time window" },
+      { "name": "access_needed", "question": "Does someone need to be home to let them in?", "required": false }
+    ],
+    "max_minutes": 3
+  }
+}
+```
+
+1. **At answer.** The daemon plays the disclosure (contacts that are not `self`) while the voice session opens. It then speaks `message` word for word; the message can't be interrupted.
+2. **During the call.** The model asks the questions one at a time and answers only from `facts`. It reads the answers back and ends the call.
+3. **What the model can do.** It records answers with the callee's exact words, records questions it couldn't answer, and ends the call. It can't dial, transfer, or read anything else.
+4. **Barge-in.** If the callee talks over the model, the model's audio stops.
+5. **Time limit.** The daemon ends the call at `max_minutes`, whatever the model does.
+
+**The outcome comes from evidence, not from the model's say-so.**
+- An answer counts (`evidence: matched`) only when its quote appears in the callee's own transcribed words, after the question was asked.
+- `completed` needs every required answer matched, and, if there was a message, the callee confirming it.
+- `voicemail_left` and `declined` also need the daemon's own check.
+- Other outcomes: `partial`, `degraded_to_message`, `not_answered`, `missed`, `failed`.
+
+If the voice session can't open within 3 s, a brief with a message falls back to a normal message call; a questions-only brief plays a short apology. A conversation redials (2 attempts, 10 minutes apart, 7 s ring) only if nobody answered. It costs xAI voice time (about $0.08 a minute at the time of writing); the policy caps minutes per call and per day.
+
+**The conversation prompt is a text file.**
+- The default is built in. `pbx-voice prompt` prints it.
+- To change it, save your version as `conversation-prompt.txt` in the state directory; `pbx-voice paths` shows where.
+  - The daemon reads the file before each call.
+  - An invalid edit is ignored: the last valid prompt stays in use, and `status` shows the error under `conversation_prompt`.
+  - Delete the file to go back to the default.
+- Each conversation's record includes the prompt's source and SHA-256, so any transcript can be traced to the exact prompt.
+- The brief is inserted as data, not as instructions: `{{call}}` and `{{brief}}` blocks, one field per line, with line breaks and block tags removed. Text in a brief can't add a heading or rule of its own.
+- Treat the prompt like code: keep it under version control, and put no secrets in it. Assume a callee can get the model to repeat it.
+- The limits that matter don't depend on the prompt. The daemon enforces the disclosure, the time limit, the record-only tools, and the evidence checks.
 
 ## Setup
 

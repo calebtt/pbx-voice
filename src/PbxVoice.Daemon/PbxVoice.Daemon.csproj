@@ -15,6 +15,11 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- The default conversation prompt; an operator's copy in the state directory overrides it. -->
+    <EmbeddedResource Include="Conversation/conversation-prompt.txt" LogicalName="PbxVoice.conversation-prompt.txt" />
+  </ItemGroup>
+
+  <ItemGroup>
     <!-- The MCP front: Streamable HTTP for agents, stdio for the local shim. -->
     <FrameworkReference Include="Microsoft.AspNetCore.App" />
     <PackageReference Include="ModelContextProtocol.AspNetCore" Version="2.2.0" />

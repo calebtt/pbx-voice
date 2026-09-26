@@ -18,6 +18,41 @@ internal sealed class RepeatInput
     public string Tz { get; set; } = "";
 }
 
+/// <summary>One question in a conversation brief.</summary>
+internal sealed class AskInput
+{
+    [Description("Short key for the answer: lowercase letters, digits, underscores. Example: \"visit_time\".")]
+    public string Name { get; set; } = "";
+
+    [Description("The question, e.g. \"When is the plumber coming?\".")]
+    public string Question { get; set; } = "";
+
+    [Description("Whether the call only counts as completed with this answered. Default true.")]
+    public bool? Required { get; set; }
+
+    [Description("The expected form of the answer, e.g. \"day and time window\".")]
+    public string? Hint { get; set; }
+}
+
+/// <summary>What a conversation call is for.</summary>
+internal sealed class BriefInput
+{
+    [Description("One sentence: why the call is being made. Everything in the brief, the goal and question hints included, may be repeated to the callee.")]
+    public string Goal { get; set; } = "";
+
+    [Description("Spoken word for word at the start and not interruptible. Give a message, questions (ask), or both.")]
+    public string? Message { get; set; }
+
+    [Description("What the assistant may share if asked. Anything else it will say it doesn't know. Only include what the user would tell this person directly.")]
+    public List<string>? Facts { get; set; }
+
+    [Description("Questions to get answered, asked one at a time.")]
+    public List<AskInput>? Ask { get; set; }
+
+    [Description("Hard time limit for the answered call, in minutes. Default 3; capped by policy.")]
+    public int? MaxMinutes { get; set; }
+}
+
 /// <summary>Per-call options; anything left out uses the defaults, and the operator's policy caps apply.</summary>
 internal sealed class OptionsInput
 {
@@ -65,22 +100,25 @@ internal sealed class PbxVoiceTools
         "Schedule a phone call that the pbx-voice daemon places later, through the user's own phone extension. " +
         "type \"alarm\": a wake-up call to a contact marked self; it redials until the callee says \"I'm up\". " +
         "type \"message\": calls a contact, speaks `text` word for word, and asks them to say \"got it\". " +
+        "type \"conversation\": a live AI voice call that follows `brief`: it can deliver a message, answer from the facts, and " +
+        "ask questions, then returns the answers with the callee's words as evidence. " +
         "Give exactly one of `at` (one-off) or `repeat` (weekly). Only schedule calls the user asked for, " +
         "and put in `text` only what the user would say to that person directly. " +
         "Returns schedule_id and next_fire, or an error from the operator's policy (unlisted contact, quiet hours, caps).")]
     public Task<CallToolResult> ScheduleCall(
-        [Description("\"alarm\" or \"message\".")] string type,
+        [Description("\"alarm\", \"message\", or \"conversation\".")] string type,
         [Description("Contact name from list_contacts (or a number, only if the operator allows unlisted numbers).")] string to,
         [Description("One-off time, ISO 8601 with a UTC offset, e.g. \"2026-10-06T05:30:00-05:00\". A time without an offset needs `tz`.")] string? at = null,
         [Description("IANA time zone for an `at` without an offset.")] string? tz = null,
         [Description("Weekly repeat instead of `at`.")] RepeatInput? repeat = null,
         [Description("Message: the words to speak (required). Alarm: an optional wake-up prompt; {time} becomes the call time.")] string? text = null,
+        [Description("Conversation only: what the call is for (required for conversation).")] BriefInput? brief = null,
         [Description("Optional per-call settings.")] OptionsInput? options = null,
         CancellationToken ct = default)
     {
         if (_rate.TryPlace() is { } limited)
             return Task.FromResult(Error(limited));
-        return Call("schedule_call", new { type, to, at, tz, repeat, text, options }, ct);
+        return Call("schedule_call", new { type, to, at, tz, repeat, text, brief, options }, ct);
     }
 
     [McpServerTool(Name = "call_now", OpenWorld = true)]
@@ -88,15 +126,16 @@ internal sealed class PbxVoiceTools
         "Place a call right away (same types and rules as schedule_call). Returns call_id at once; the call runs in the " +
         "background. To get the result in this session, call wait_for_call with the call_id.")]
     public Task<CallToolResult> CallNow(
-        [Description("\"alarm\" or \"message\".")] string type,
+        [Description("\"alarm\", \"message\", or \"conversation\".")] string type,
         [Description("Contact name from list_contacts.")] string to,
         [Description("Message: the words to speak (required). Alarm: optional wake-up prompt.")] string? text = null,
+        [Description("Conversation only: what the call is for (required for conversation).")] BriefInput? brief = null,
         [Description("Optional per-call settings.")] OptionsInput? options = null,
         CancellationToken ct = default)
     {
         if (_rate.TryPlace() is { } limited)
             return Task.FromResult(Error(limited));
-        return Call("call_now", new { type, to, text, options }, ct);
+        return Call("call_now", new { type, to, text, brief, options }, ct);
     }
 
     [McpServerTool(Name = "wait_for_call", ReadOnly = true)]
@@ -139,8 +178,10 @@ internal sealed class PbxVoiceTools
     [McpServerTool(Name = "get_call", ReadOnly = true)]
     [Description(
         "The full record of one call: every attempt with its SIP result and ringing time, the callee's transcribed replies " +
-        "and how each was recognized (stt, speech_detected, keypad), and the outcome. Report the outcome exactly as recorded; " +
-        "say not_acknowledged or not_answered plainly.")]
+        "and how each was recognized (stt, speech_detected, keypad), and the outcome. For a conversation: the answers " +
+        "(value, the callee's quote, and evidence: matched or unmatched), questions the callee asked, and the transcript. " +
+        "Report the outcome exactly as recorded, and pass answers on as what the callee said; mention any answer with " +
+        "evidence unmatched.")]
     public Task<CallToolResult> GetCall(
         [Description("The call_id.")] string call_id,
         CancellationToken ct = default) =>

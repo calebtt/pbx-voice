@@ -10,7 +10,7 @@ An agent (a Grok Bot, or any other MCP client) schedules a call. A long-lived da
 | `message` | Call Mom and tell her my flight lands at 15:40 | Available (daemon and `ctl`) |
 | `conversation` | Ask the landlord when the plumber is coming and bring back the answer | Planned |
 
-The MCP tool front for agents is planned; today the daemon is driven with `pbx-voice ctl`.
+Agents use it through MCP (Streamable HTTP, or a stdio shim); operators can also use `pbx-voice ctl`.
 
 **Status:** early. Run any alarm beside a normal phone alarm until you trust it.
 
@@ -64,9 +64,38 @@ Run it:
 ./dist/pbx-voice daemon                   # foreground; logs to stderr
 ```
 
-or as a systemd user service with [`docs/pbx-voice.service`](docs/pbx-voice.service). Only one daemon runs per extension.
+or as a systemd user service with [`docs/pbx-voice.service`](docs/pbx-voice.service). Only one daemon runs per extension. The ASP.NET Core runtime is included in the self-contained build; a framework-dependent build needs the ASP.NET Core 8 runtime.
 
-## Using it
+## Connecting an agent (MCP)
+
+The daemon serves MCP at `http://127.0.0.1:8765/mcp` (Streamable HTTP). Every request needs the bearer token the daemon writes to `mcp-token` in the state directory on first start. `pbx-voice mcp-token` prints the endpoint and header.
+
+Tools: `schedule_call`, `call_now`, `wait_for_call`, `list_schedules`, `cancel_schedule`, `cancel_call`, `list_calls`, `get_call`, `list_contacts`, `status`.
+- Policy refusals come back as tool errors with the reason.
+- Placing and scheduling calls is rate-limited (10 a minute, 60 an hour) on top of the policy's daily cap.
+- Results stay under 20,000 bytes: long transcripts are shortened, and `truncated: true` says so.
+- Any result that carries the callee's words includes an `untrusted_callee_speech` notice.
+
+Grok (`~/.grok/config.toml`), over HTTP:
+
+```toml
+[mcp_servers.pbx-voice]
+url = "http://127.0.0.1:8765/mcp"
+headers = { "Authorization" = "Bearer ${PBX_VOICE_MCP_TOKEN}" }
+```
+
+or through the stdio shim, which forwards to the running daemon's control socket and needs no token (same user only):
+
+```toml
+[mcp_servers.pbx-voice]
+command = "/home/you/.local/bin/pbx-voice"
+args = ["mcp-stdio"]
+```
+
+- **Listen address:** `PBX_VOICE_MCP_LISTEN` changes it (`host:port`, or `off`). On a separate host (deployment mode B), keep it on loopback and publish it through an HTTPS reverse proxy; the daemon warns if it listens elsewhere.
+- **Protecting the token:** anyone with the token can place calls to your contacts, so treat it like a password.
+
+## Using it (operator CLI)
 
 ```bash
 pbx-voice ctl status

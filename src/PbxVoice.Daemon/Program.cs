@@ -13,6 +13,8 @@ const string Usage = """
     Usage:
       pbx-voice daemon                    run the daemon (foreground; logs to stderr)
       pbx-voice ctl <operation> [json]    call an operation on the running daemon
+      pbx-voice mcp-stdio                 MCP server on stdin/stdout, forwarding to the running daemon
+      pbx-voice mcp-token                 print the MCP bearer token and endpoint for the agent's config
       pbx-voice paths                     show where state, policy, and secrets live
       pbx-voice selftest                  check that this host can run the daemon (ONNX Runtime, Silero VAD)
       pbx-voice version
@@ -58,7 +60,27 @@ try
             Console.WriteLine($"policy:          {paths.Policy}");
             Console.WriteLine($"secrets:         {paths.Secrets} (optional; the environment wins)");
             Console.WriteLine($"control socket:  {paths.ControlSocket}");
+            Console.WriteLine($"mcp token:       {paths.McpToken}");
             Console.WriteLine($"locks:           {StatePaths.LocksDirectory(Environment.GetEnvironmentVariable)}");
+            return 0;
+        }
+        case "mcp-stdio":
+        {
+            var stop = new CancellationTokenSource();
+            Console.CancelKeyPress += (_, e) => { e.Cancel = true; stop.Cancel(); };
+            return await PbxVoice.Mcp.McpStdio.RunAsync(stop.Token);
+        }
+        case "mcp-token":
+        {
+            var paths = StatePaths.FromEnvironment();
+            if (!File.Exists(paths.McpToken))
+            {
+                Console.Error.WriteLine($"no token yet at {paths.McpToken}; start the daemon once to create it");
+                return 1;
+            }
+            string listen = Environment.GetEnvironmentVariable("PBX_VOICE_MCP_LISTEN") is { Length: > 0 } l ? l : PbxVoice.Mcp.McpHttpFront.DefaultListen;
+            Console.WriteLine($"endpoint: http://{listen}{PbxVoice.Mcp.McpHttpFront.Path}");
+            Console.WriteLine($"header:   Authorization: Bearer {File.ReadAllText(paths.McpToken).Trim()}");
             return 0;
         }
         case "selftest":

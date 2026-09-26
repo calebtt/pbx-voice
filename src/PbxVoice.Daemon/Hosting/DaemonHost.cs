@@ -2,6 +2,7 @@ using System.Reflection;
 using PbxVoice.Audio;
 using PbxVoice.Calls;
 using PbxVoice.Control;
+using PbxVoice.Mcp;
 using PbxVoice.Policy;
 using PbxVoice.Scheduling;
 using PbxVoice.Service;
@@ -113,6 +114,30 @@ internal sealed class DaemonHost
         var service = new PbxVoiceService(time, policy, schedules, calls, clips, executor, phone, host);
         await using var control = new ControlServer(paths.ControlSocket, service.HandleAsync);
         control.Start();
+
+        // The agent's interface (PR-API-1, PR-SAFE-8).
+        McpHttpFront? mcp = null;
+        string listen = Environment.GetEnvironmentVariable("PBX_VOICE_MCP_LISTEN") is { Length: > 0 } l ? l : McpHttpFront.DefaultListen;
+        if (!listen.Equals("off", StringComparison.OrdinalIgnoreCase))
+        {
+            System.Net.IPEndPoint endpoint;
+            try
+            {
+                endpoint = McpHttpFront.ParseListen(listen);
+            }
+            catch (FormatException ex)
+            {
+                Log.Error("{Error}", ex.Message);
+                return 2;
+            }
+            if (!System.Net.IPAddress.IsLoopback(endpoint.Address))
+                Log.Warning("MCP listens on {Address}, which is not loopback: put it behind an HTTPS reverse proxy (deployment mode B)", endpoint);
+            string token = McpHttpFront.LoadOrCreateToken(paths.McpToken);
+            var tools = new PbxVoiceTools(new ServiceBackend(service), new PlacementRateLimiter(time));
+            mcp = await McpHttpFront.StartAsync(endpoint, token, tools, stop).ConfigureAwait(false);
+            Log.Information("MCP front on {Endpoint} (bearer token in {TokenFile})", mcp.Endpoint, paths.McpToken);
+        }
+        await using var mcpLifetime = mcp;
 
         Log.Information("pbx-voice {Version} daemon for {User}@{Server}; state in {State}; register={Register}",
             Version, sipConfig.Username, sipConfig.Server, paths.Root, policy.Current.Register);

@@ -217,7 +217,7 @@ public class AlarmTests
     }
 
     [Fact]
-    public async Task A_failed_render_still_schedules_with_the_wake_tone()
+    public async Task A_failed_render_still_places_the_call_with_the_wake_tone()
     {
         using var h = new Harness();
         h.Tts.FailWhen = t => t.StartsWith("Good morning", StringComparison.Ordinal);
@@ -234,24 +234,22 @@ public class AlarmTests
     }
 
     [Fact]
-    public async Task The_prompt_says_the_scheduled_time()
+    public async Task The_prompt_says_the_time_of_the_call()
     {
-        using var h = new Harness();
-        await h.Op("schedule_call", new { type = "alarm", to = "me", repeat = new { days = "weekdays", time = "05:30", tz = Policies.Chicago } });
+        using var h = new Harness(start: new DateTimeOffset(2026, 10, 5, 10, 30, 0, TimeSpan.Zero)); // 5:30 in Chicago
+        await h.Op("call_now", new { type = "alarm", to = "me" });
         Assert.Contains("Good morning, it's 5:30 AM. Say 'I'm up' when you're awake.", h.Tts.Rendered);
     }
 
     [Fact]
-    public async Task A_contact_no_longer_self_at_fire_time_is_not_called()
+    public async Task A_contact_no_longer_self_before_dialing_is_not_called()
     {
         using var h = new Harness();
-        await h.Op("schedule_call", new { type = "alarm", to = "me", at = "2026-10-05T11:00:00-05:00" });
+        await h.Op("call_now", new { type = "alarm", to = "me" });
         var changed = Policies.Standard();
         changed.Contacts["me"].Self = false;
         h.Policy.Replace(changed);
 
-        h.Time.SetUtcNow(new DateTimeOffset(2026, 10, 5, 16, 0, 1, TimeSpan.Zero));
-        Hosting.DaemonHost.FireDueSchedules(h.Schedules, h.Executor, h.Time.GetUtcNow());
         await h.RunDue();
 
         var r = h.Calls.SnapshotAll().Single();

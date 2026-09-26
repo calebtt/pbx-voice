@@ -8,7 +8,7 @@ using Serilog;
 using Serilog.Events;
 
 const string Usage = """
-    pbx-voice: scheduled phone calls over your own SIP extension
+    pbx-voice: phone calls for agents over your own SIP extension
 
     Usage:
       pbx-voice daemon                    run the daemon (foreground; logs to stderr)
@@ -20,12 +20,14 @@ const string Usage = """
       pbx-voice selftest                  check that this host can run the daemon (ONNX Runtime, Silero VAD)
       pbx-voice version
 
-    Operations: schedule_call, call_now, wait_for_call, list_schedules, cancel_schedule,
-    cancel_call, list_calls, get_call, list_contacts, status
+    Operations: call_now, wait_for_call, cancel_call, list_calls, get_call, list_contacts, status
+
+    pbx-voice places calls when asked; it has no scheduler. For a call at a later time, have a
+    scheduler (the agent's routines, or cron) run call_now at that time.
 
     Examples:
       pbx-voice ctl status
-      pbx-voice ctl schedule_call '{"type":"alarm","to":"me","repeat":{"days":"weekdays","time":"05:30","tz":"America/Chicago"}}'
+      pbx-voice ctl call_now '{"type":"alarm","to":"me"}'
       pbx-voice ctl call_now '{"type":"message","to":"mom","text":"My flight lands at 3:40."}'
       pbx-voice ctl wait_for_call '{"call_id":"c_...","timeout_sec":300}'
     """;

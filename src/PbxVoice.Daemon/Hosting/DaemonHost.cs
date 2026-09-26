@@ -5,7 +5,6 @@ using PbxVoice.Control;
 using PbxVoice.Conversation;
 using PbxVoice.Mcp;
 using PbxVoice.Policy;
-using PbxVoice.Scheduling;
 using PbxVoice.Service;
 using PbxVoice.Sip;
 using PbxVoice.Speech;
@@ -15,13 +14,12 @@ using Serilog;
 namespace PbxVoice.Hosting;
 
 /// <summary>
-/// The long-lived daemon: one SIP registration, the scheduler, the executor, the pre-flight
-/// check, record retention, and the control socket. The daemon, not an LLM, fires every call
-/// (PR-SCHED-2).
+/// The daemon: one SIP registration, the executor, record retention, the control socket, and the
+/// MCP front. It places calls when asked (<c>call_now</c>); when to call is up to the agent's own
+/// scheduler.
 /// </summary>
 internal sealed class DaemonHost
 {
-    public static readonly TimeSpan PreflightLead = TimeSpan.FromMinutes(10);
     private static readonly TimeSpan PingInterval = TimeSpan.FromMinutes(5);
     private static readonly TimeSpan Tick = TimeSpan.FromSeconds(1);
 
@@ -74,7 +72,7 @@ internal sealed class DaemonHost
         }
         else
         {
-            Log.Warning("No XAI_API_KEY: alarms use the built-in wake tone and replies fall back to speech detection; messages cannot be scheduled");
+            Log.Warning("No XAI_API_KEY: alarms use the built-in wake tone and replies fall back to speech detection; messages and conversations are refused");
             var none = new UnavailableSpeech();
             tts = none;
             stt = none;
@@ -98,7 +96,6 @@ internal sealed class DaemonHost
         var time = TimeProvider.System;
         var clips = new ClipStore(paths.Clips, tts);
         var calls = new CallStore(paths.Calls);
-        var schedules = new ScheduleStore(paths.Schedules);
         using var phone = new SipPhoneLine(sipConfig, secrets.LocalSipPort, policy.Current.Register,
             () => policy.Current.InboundRejectStatus, vad, time);
         IVoiceSessionFactory? sessions = secrets.HasXaiKey ? new XaiVoiceSessionFactory(secrets["XAI_API_KEY"]!) : null;
@@ -107,6 +104,9 @@ internal sealed class DaemonHost
             Log.Warning("The conversation prompt file has an error ({Error}); conversation calls use the built-in prompt until it is fixed", promptError);
         var executor = new Executor(time, phone, policy, calls, clips, new ReplyListener(stt, time), sessions, prompts);
         executor.Recover();
+        string oldSchedules = Path.Combine(paths.Root, "schedules.json");
+        if (File.Exists(oldSchedules))
+            Log.Warning("{File} is no longer used: pbx-voice has no scheduler, so the agent's own scheduler calls call_now at the right time. Its schedules will not fire", oldSchedules);
 
         (DateTimeOffset At, int? Status)? lastPing = null;
         var host = new HostStatus
@@ -116,7 +116,7 @@ internal sealed class DaemonHost
             XaiKeyPresent = secrets.HasXaiKey,
             LastPing = () => lastPing,
         };
-        var service = new PbxVoiceService(time, policy, schedules, calls, clips, executor, phone, host);
+        var service = new PbxVoiceService(time, policy, calls, clips, executor, phone, host);
         await using var control = new ControlServer(paths.ControlSocket, service.HandleAsync);
         try
         {
@@ -172,8 +172,6 @@ internal sealed class DaemonHost
             while (!stop.IsCancellationRequested)
             {
                 var now = time.GetUtcNow();
-                FireDueSchedules(schedules, executor, now);
-
                 if (now >= nextPrune)
                 {
                     int removed = calls.Prune(now - TimeSpan.FromDays(policy.Current.RetentionDays));
@@ -186,7 +184,6 @@ internal sealed class DaemonHost
                     lastPing = (now, await phone.PingServerAsync(TimeSpan.FromSeconds(5), stop).ConfigureAwait(false));
                     nextPing = now + PingInterval;
                 }
-                await PreflightAsync(schedules, phone, time, stop, p => lastPing = p).ConfigureAwait(false);
 
                 if (!await executor.RunDueAsync(stop).ConfigureAwait(false))
                     await Task.Delay(Tick, time, stop).ConfigureAwait(false);
@@ -201,64 +198,5 @@ internal sealed class DaemonHost
             Log.Information("pbx-voice daemon stopping");
         }
         return 0;
-    }
-
-    internal static void FireDueSchedules(ScheduleStore schedules, Executor executor, DateTimeOffset now)
-    {
-        List<(Schedule Schedule, DateTimeOffset Fire)> due;
-        lock (schedules.Sync)
-            due = schedules.CollectDue(now);
-        foreach (var (s, fire) in due)
-        {
-            var record = executor.Create(s.Id, s.Type, s.ToTarget(), s.Options, s.Clips, s.Text, fire, s.Notes, s.Brief);
-            Log.Information("Schedule {ScheduleId} fired for {Fire:O}: call {CallId}", s.Id, fire, record.CallId);
-        }
-    }
-
-    /// <summary>
-    /// PR-ALARM-7: about ten minutes before an alarm fires, check PBX reachability (SIP OPTIONS) and
-    /// registration. After a 402, 403, or 404, re-register once (PR-REG-9) and record the result.
-    /// A rejected password (401/407) is recorded and not retried. Each fire is checked once.
-    /// </summary>
-    internal static async Task PreflightAsync(ScheduleStore schedules, IPhoneLine phone, TimeProvider time,
-        CancellationToken stop, Action<(DateTimeOffset, int?)>? onPing = null)
-    {
-        var now = time.GetUtcNow();
-        List<Schedule> due;
-        lock (schedules.Sync)
-        {
-            due = schedules.All.Where(s => s.Status == "active" && s.Type == CallType.Alarm
-                                           && s.NextFire is { } f && now >= f - PreflightLead && now < f
-                                           && s.Preflight?.ForFire != f).ToList();
-        }
-        foreach (var s in due)
-        {
-            var record = new PreflightRecord { At = now, ForFire = s.NextFire!.Value };
-            record.OptionsStatus = await phone.PingServerAsync(TimeSpan.FromSeconds(5), stop).ConfigureAwait(false);
-            record.PbxReachable = record.OptionsStatus is not null;
-            onPing?.Invoke((now, record.OptionsStatus));
-            var reg = phone.Registration;
-            if (reg.HardFailure)
-            {
-                record.Reregister = new ReregisterRecord { At = now, Before = reg.LastError ?? reg.State };
-                if (reg.ErrorStatus is 402 or 403 or 404)
-                {
-                    record.Reregister.Attempted = true;
-                    phone.Reregister();
-                    record.Reregister.Registered = await phone.WaitForRegistrationAsync(Executor.ReregisterWait, stop).ConfigureAwait(false);
-                }
-                reg = phone.Registration;
-            }
-            record.RegistrationState = reg.State;
-            record.RegistrationError = reg.LastError;
-            lock (schedules.Sync)
-            {
-                s.Preflight = record;
-                schedules.Save();
-            }
-            if (!record.PbxReachable || !reg.Registered)
-                Log.Warning("Pre-flight for alarm {ScheduleId} at {Fire:O}: PBX reachable={Reachable}, registration={State} {Error}",
-                    s.Id, s.NextFire, record.PbxReachable, reg.State, reg.LastError);
-        }
     }
 }

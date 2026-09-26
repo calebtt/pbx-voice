@@ -26,11 +26,11 @@ public class StateFileTests : IDisposable
         Directory.CreateDirectory(root, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute | UnixFileMode.GroupRead | UnixFileMode.GroupExecute | UnixFileMode.OtherRead | UnixFileMode.OtherExecute);
         var paths = new StatePaths(root);
         paths.EnsureCreated();
-        SecureFile.WriteAllText(paths.Schedules, "[]");
+        SecureFile.WriteAllText(paths.Policy, "{}");
 
         Assert.Equal(StatePaths.DirMode, File.GetUnixFileMode(root));
         Assert.Equal(StatePaths.DirMode, File.GetUnixFileMode(paths.Calls));
-        Assert.Equal(StatePaths.FileMode, File.GetUnixFileMode(paths.Schedules));
+        Assert.Equal(StatePaths.FileMode, File.GetUnixFileMode(paths.Policy));
     }
 
     [Fact]

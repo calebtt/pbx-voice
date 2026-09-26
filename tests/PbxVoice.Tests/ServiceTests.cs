@@ -3,50 +3,11 @@ using Xunit;
 
 namespace PbxVoice.Tests;
 
-/// <summary>Scheduling-time checks: times, targets, policy, and options.</summary>
+/// <summary>Request-time checks: targets, policy, and options.</summary>
 public class ServiceTests
 {
     private static async Task<string> Refused(Harness h, string op, object args) =>
         (await Assert.ThrowsAsync<ServiceError>(() => h.Op(op, args))).Message;
-
-    [Fact]
-    public async Task A_time_with_no_offset_and_no_zone_is_refused()
-    {
-        using var h = new Harness();
-        Assert.Contains("no UTC offset", await Refused(h, "schedule_call", new { type = "alarm", to = "me", at = "2026-10-06T05:30:00" }));
-    }
-
-    [Fact]
-    public async Task A_local_time_with_a_zone_is_accepted()
-    {
-        using var h = new Harness();
-        var r = await h.Op("schedule_call", new { type = "alarm", to = "me", at = "2026-10-06T05:30:00", tz = Policies.Chicago });
-        Assert.Equal(new DateTimeOffset(2026, 10, 6, 10, 30, 0, TimeSpan.Zero), r.GetProperty("next_fire").GetDateTimeOffset());
-    }
-
-    [Fact]
-    public async Task A_weekly_alarm_fires_next_weekday_morning()
-    {
-        using var h = new Harness(); // Monday 10:00 Chicago
-        var r = await h.Op("schedule_call", new { type = "alarm", to = "me", repeat = new { days = new[] { "mon", "wed" }, time = "05:30", tz = Policies.Chicago } });
-        Assert.Equal(new DateTimeOffset(2026, 10, 7, 10, 30, 0, TimeSpan.Zero), r.GetProperty("next_fire").GetDateTimeOffset());
-        Assert.Single((await h.Op("list_schedules")).EnumerateArray());
-    }
-
-    [Fact]
-    public async Task At_and_repeat_together_are_refused()
-    {
-        using var h = new Harness();
-        Assert.Contains("exactly one", await Refused(h, "schedule_call",
-            new { type = "alarm", to = "me", at = "2026-10-06T05:30:00Z", repeat = new { days = "daily", time = "05:30", tz = "UTC" } }));
-    }
-
-    [Fact]
-    public async Task Repeat_needs_a_zone()
-    {
-        using var h = new Harness();
-        Assert.Contains("repeat.tz", await Refused(h, "schedule_call", new { type = "alarm", to = "me", repeat = new { days = "daily", time = "05:30" } }));
-    }
 
     [Fact]
     public async Task A_number_not_in_the_contacts_is_refused()
@@ -84,9 +45,9 @@ public class ServiceTests
     [Fact]
     public async Task Quiet_hours_refuse_non_self_calls_but_not_self_alarms()
     {
-        using var h = new Harness();
-        Assert.Contains("quiet hours", await Refused(h, "schedule_call", new { type = "message", to = "mom", text = "Hi.", at = "2026-10-05T22:00:00-05:00" }));
-        await h.Op("schedule_call", new { type = "alarm", to = "me", at = "2026-10-06T05:30:00-05:00" });
+        using var h = new Harness(start: new DateTimeOffset(2026, 10, 6, 3, 0, 0, TimeSpan.Zero)); // 22:00 in Chicago
+        Assert.Contains("quiet hours", await Refused(h, "call_now", new { type = "message", to = "mom", text = "Hi." }));
+        await h.Op("call_now", new { type = "alarm", to = "me" });
     }
 
     [Theory]
@@ -110,13 +71,13 @@ public class ServiceTests
     }
 
     [Fact]
-    public async Task Clips_for_a_recurring_call_are_rendered_once()
+    public async Task The_same_clip_is_rendered_once()
     {
         using var h = new Harness();
-        var weekly = new { type = "alarm", to = "me", repeat = new { days = "weekdays", time = "05:30", tz = Policies.Chicago } };
-        await h.Op("schedule_call", weekly);
+        var alarm = new { type = "alarm", to = "me" };
+        await h.Op("call_now", alarm);
         int rendered = h.Tts.Rendered.Count;
-        await h.Op("schedule_call", weekly);
+        await h.Op("call_now", alarm);
         Assert.Equal(rendered, h.Tts.Rendered.Count);
     }
 
@@ -147,15 +108,5 @@ public class ServiceTests
         var s = await h.Op("status");
         Assert.True(s.GetProperty("registration").GetProperty("registered").GetBoolean());
         Assert.Equal(20, s.GetProperty("usage_today").GetProperty("calls_per_day").GetInt32());
-    }
-
-    [Fact]
-    public async Task Cancelling_a_schedule_stops_future_fires()
-    {
-        using var h = new Harness();
-        var r = await h.Op("schedule_call", new { type = "alarm", to = "me", repeat = new { days = "daily", time = "05:30", tz = Policies.Chicago } });
-        await h.Op("cancel_schedule", new { schedule_id = r.GetProperty("schedule_id").GetString() });
-        Assert.Empty((await h.Op("list_schedules")).EnumerateArray());
-        Assert.Empty(h.Schedules.CollectDue(h.Time.GetUtcNow().AddDays(8)));
     }
 }

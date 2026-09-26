@@ -515,7 +515,7 @@ public class ConversationFlowTests
     }
 
     [Fact]
-    public async Task Scheduling_renders_the_clips_a_conversation_needs()
+    public async Task Requesting_a_conversation_renders_the_clips_it_needs()
     {
         using var h = new Harness();
         await h.CallNow(new { type = "conversation", to = "mom", brief = Brief() });

@@ -1,8 +1,8 @@
 # pbx-voice
 
-Scheduled phone calls for agents, placed through a SIP extension you already have.
+Phone calls for agents, placed through a SIP extension you already have.
 
-An agent (a Grok Bot, or any other MCP client) schedules a call. A long-lived daemon places it at the right time over your own PBX, plays or listens, and writes the result. The agent does not run the call, and no LLM runs while an alarm or message call is in progress.
+An agent (a Grok Bot, or any other MCP client) asks for a call. The daemon places it over your own PBX, plays or listens, and writes the result. The agent does not run the call, and no LLM runs while an alarm or message call is in progress. When to call is up to the agent: pbx-voice has no scheduler (see [Calling at a set time](#calling-at-a-set-time)).
 
 | Type | Example | Status |
 |---|---|---|
@@ -17,7 +17,7 @@ Agents use it through MCP (Streamable HTTP, or a stdio shim); operators can also
 ## How it works
 
 - **SIP:** [SipBotLib](https://github.com/calebtt/SipBotLib) (SIPSorcery), as a submodule pinned to a release. MinimalSileroVad is a submodule too. One registration, one call at a time, PCMU (G.711 μ-law) audio.
-- **Speech:** xAI text-to-speech renders every clip when the call is scheduled, as 8 kHz μ-law. xAI speech-to-text transcribes short spoken replies ("I'm up", "got it"). No local speech-to-text or text-to-speech.
+- **Speech:** xAI text-to-speech renders every clip when the call is requested, as 8 kHz μ-law. xAI speech-to-text transcribes short spoken replies ("I'm up", "got it"). No local speech-to-text or text-to-speech.
 - **Replies:** the daemon listens only after its prompt has finished, for up to 8 s. [Silero VAD](https://github.com/snakers4/silero-vad) (V5, 8 kHz, through [MinimalSileroVad](https://github.com/calebtt/MinimalSileroVad) and the CPU build of ONNX Runtime) finds where the reply starts and ends: after about 0.6 s of silence, or 5 s of speech. The transcript must match a listed phrase as a whole utterance: "yeah, I'm up" counts, but "yes" alone or "I'm up but tired" does not.
 - **Fallbacks:** if speech-to-text fails or takes over 3 s, 0.5–2.5 s of detected speech counts as a reply; a longer capture, such as a voicemail greeting, does not. A keypad press (RFC 4733) also counts. An alarm whose prompt could not be rendered plays a built-in wake tone.
 - **Ring time** is counted from the first 180/183, not from the INVITE. A call with neither ringing nor an answer within 7 s of the INVITE is cancelled as a SIP failure.
@@ -84,6 +84,16 @@ If the voice session can't open within 3 s, a brief with a message falls back to
 - Treat the prompt like code: keep it under version control, and put no secrets in it. Assume a callee can get the model to repeat it.
 - The limits that matter don't depend on the prompt. The daemon enforces the disclosure, the time limit, the record-only tools, and the evidence checks.
 
+## Calling at a set time
+
+pbx-voice places a call when it's asked to (`call_now`) and has no scheduler of its own. The agent's scheduler decides when: a Grok Bot routine, cron, or anything else that can run the agent or a command at a set time.
+- **On Grok Bot:** ask the bot for the call, for example "wake me up at 5:30 on weekdays". It creates a routine for that time (a Weekdays routine at 5:30). The routine's instruction places the call with `call_now`, waits with `wait_for_call` until there's an outcome, and reports it. Routines only repeat, so for a one-off call the bot deletes the routine after it runs.
+- **Allow the pbx-voice tools without approval for routines.** An approval requested by a routine expires after about 10 minutes, so an alarm waiting for one never rings.
+- **Keep waiting while it's `in_progress`.** An alarm that redials can take about 20 minutes, and `wait_for_call` waits at most 900 s, so the agent calls it again until there's an outcome.
+- **On an always-on host, cron works too:** `30 5 * * 1-5 pbx-voice ctl call_now '{"type":"alarm","to":"me"}'`.
+
+The daemon still enforces the policy (contacts, quiet hours, caps) on every call, whoever asked for it.
+
 ## Setup
 
 Requires the .NET 8 SDK to build, a SIP extension on your PBX (a dedicated one is best), and a host that can run ONNX Runtime: glibc-based Linux on x64 or arm64 (Alpine and other musl systems are not supported).
@@ -102,7 +112,7 @@ A single-file build unpacks ONNX Runtime to a temp directory on first run. If th
 The state directory is `SIPBOT_STATE_DIR`, else `$XDG_STATE_HOME/pbx-voice`, else `~/.local/state/pbx-voice`. The daemon creates it with mode 0700 and writes every file 0600. Put two files in it:
 
 - **`policy.json`**: copy [`docs/policy.example.json`](docs/policy.example.json) and edit it. It holds the contacts, quiet hours, daily caps, phrase lists, and dialing settings. The agent can read it and cannot change it. Edits apply without a restart.
-- **`secrets.env`** (or the same variables in the environment, which win): see [`docs/secrets.env.example`](docs/secrets.env.example). `SIP_SERVER`, `SIP_USERNAME`, `SIP_PASSWORD`, optionally `SIP_PORT`, `SIP_FROMNAME`, `SIP_LOCAL_PORT`, and `XAI_API_KEY`. Without an xAI key, alarms still work (wake tone, speech detection) but messages cannot be scheduled.
+- **`secrets.env`** (or the same variables in the environment, which win): see [`docs/secrets.env.example`](docs/secrets.env.example). `SIP_SERVER`, `SIP_USERNAME`, `SIP_PASSWORD`, optionally `SIP_PORT`, `SIP_FROMNAME`, `SIP_LOCAL_PORT`, and `XAI_API_KEY`. Without an xAI key, alarms still work (wake tone, speech detection), but messages and conversations are refused.
 
 Run it:
 
@@ -116,9 +126,9 @@ or as a systemd user service with [`docs/pbx-voice.service`](docs/pbx-voice.serv
 
 The daemon serves MCP at `http://127.0.0.1:8765/mcp` (Streamable HTTP). Every request needs the bearer token the daemon writes to `mcp-token` in the state directory on first start. `pbx-voice mcp-token` prints the endpoint and header.
 
-Tools: `schedule_call`, `call_now`, `wait_for_call`, `list_schedules`, `cancel_schedule`, `cancel_call`, `list_calls`, `get_call`, `list_contacts`, `status`.
+Tools: `call_now`, `wait_for_call`, `cancel_call`, `list_calls`, `get_call`, `list_contacts`, `status`.
 - Policy refusals come back as tool errors with the reason.
-- Placing and scheduling calls is rate-limited (10 a minute, 60 an hour) on top of the policy's daily cap.
+- Placing calls is rate-limited (10 a minute, 60 an hour) on top of the policy's daily cap.
 - Results stay under 20,000 bytes: long transcripts are shortened, and `truncated: true` says so.
 - Any result that carries the callee's words includes an `untrusted_callee_speech` notice.
 
@@ -147,19 +157,16 @@ args = ["mcp-stdio"]
 pbx-voice ctl status
 pbx-voice ctl list_contacts
 
-# Weekday wake-up call; says "Good morning, it's 5:30 AM. Say 'I'm up' when you're awake."
-pbx-voice ctl schedule_call '{"type":"alarm","to":"me","repeat":{"days":"weekdays","time":"05:30","tz":"America/Chicago"}}'
+# A wake-up call now; says "Good morning, it's 5:30 AM. Say 'I'm up' when you're awake."
+pbx-voice ctl call_now '{"type":"alarm","to":"me","options":{"max_attempts":3}}'
 
-# One-off, with an explicit offset (a time without an offset or tz is refused)
-pbx-voice ctl schedule_call '{"type":"alarm","to":"me","at":"2026-10-06T06:00:00-05:00","options":{"max_attempts":3}}'
-
-# A message now, then wait for the result
+# A message, then wait for the result
 pbx-voice ctl call_now '{"type":"message","to":"mom","text":"My flight lands at 3:40."}'
 pbx-voice ctl wait_for_call '{"call_id":"c_...","timeout_sec":300}'
 
 pbx-voice ctl list_calls '{"limit":10}'
 pbx-voice ctl get_call '{"call_id":"c_..."}'
-pbx-voice ctl cancel_schedule '{"schedule_id":"s_..."}'
+pbx-voice ctl cancel_call '{"call_id":"c_..."}'
 ```
 
 Call records (`calls/*.json`) keep each attempt: when ringing started, the SIP result, the replies with their transcripts and how each was recognized, and the outcome. Records are deleted after 30 days (`retention_days`). No audio is kept.
@@ -176,7 +183,7 @@ A cell voicemail often answers before the ring time is up. With `ack: voice`, vo
 
 ## Safety
 
-- Every callee must be in `policy.json` (unless `allow_unlisted_numbers` is on). Alarms only call `self`. Quiet hours block calls to anyone else. Daily caps apply. All of this is checked when a call is scheduled and again when it fires.
+- Every callee must be in `policy.json` (unless `allow_unlisted_numbers` is on). Alarms only call `self`. Quiet hours block calls to anyone else. Daily caps apply. All of this is checked when a call is requested and again before it dials.
 - If you administer the PBX, restrict the extension's outbound routes and allow one concurrent call. Where that's possible, it's the strongest control against toll fraud, because it sits outside this host.
 - Calls to contacts that are not `self` start with a disclosure clip. AI-generated voices and call transcription are regulated in many places (in the US, the FCC treats AI voices as "artificial voice" under the TCPA, and some states require all-party consent to record). This is not legal advice; check before calling anyone outside your household.
 - If the daemon runs on the same machine and user account as the agent (Grok Bot, for example), the agent can read `secrets.env` and edit the policy; the policy then guides the agent but can't bind it. Use an xAI key only for pbx-voice, with prepaid credit or a spending limit. [docs/security.md](docs/security.md) covers what holds on that setup, prompt injection, and how to verify releases.
@@ -190,7 +197,7 @@ dotnet build PbxVoice.sln
 dotnet test PbxVoice.sln
 ```
 
-Unit tests use a fake clock and a scripted phone, so they cover scheduling across DST changes, the call flows, redial rules, and policy checks without a PBX. The Silero tests run the real model on short recorded replies (`tests/PbxVoice.Tests/Fixtures`).
+Unit tests use a fake clock and a scripted phone, so they cover policy days and quiet hours across DST changes, the call flows, redial rules, and policy checks without a PBX. The Silero tests run the real model on short recorded replies (`tests/PbxVoice.Tests/Fixtures`).
 
 ## Grok plugin
 

@@ -176,7 +176,6 @@ internal sealed class ReregisterRecord
 internal sealed class CallRecord
 {
     public string CallId { get; set; } = "";
-    public string? ScheduleId { get; set; }
     public CallType Type { get; set; }
     public string Contact { get; set; } = "";
     public string MaskedNumber { get; set; } = "";

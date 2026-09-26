@@ -102,9 +102,9 @@ A cell voicemail often answers before the ring time is up. With `ack: voice`, vo
 ## Safety
 
 - Every callee must be in `policy.json` (unless `allow_unlisted_numbers` is on). Alarms only call `self`. Quiet hours block calls to anyone else. Daily caps apply. All of this is checked when a call is scheduled and again when it fires.
-- On the PBX, restrict the extension's outbound routes and allow one concurrent call. That is the strongest control against toll fraud because it sits outside this host.
+- If you administer the PBX, restrict the extension's outbound routes and allow one concurrent call. Where that's possible, it's the strongest control against toll fraud, because it sits outside this host.
 - Calls to contacts that are not `self` start with a disclosure clip. AI-generated voices and call transcription are regulated in many places (in the US, the FCC treats AI voices as "artificial voice" under the TCPA, and some states require all-party consent to record). This is not legal advice; check before calling anyone outside your household.
-- If the daemon runs on the same machine and user account as the agent, the agent can read `secrets.env`. Use a dedicated extension with a unique password and an xAI key used only for this, or run the daemon on another host.
+- If the daemon runs on the same machine and user account as the agent (Grok Bot, for example), the agent can read `secrets.env` and edit the policy; the policy then guides the agent but can't bind it. Use an xAI key only for pbx-voice, with prepaid credit or a spending limit. [docs/security.md](docs/security.md) covers what holds on that setup, prompt injection, and how to verify releases.
 
 Network endpoints used: your PBX (SIP and RTP over UDP), public STUN servers (to learn the public address behind NAT), and `api.x.ai`.
 

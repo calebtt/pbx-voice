@@ -185,13 +185,29 @@ internal sealed class ControlServer : IAsyncDisposable
     }
 }
 
+/// <summary>
+/// Nothing answered on the control socket, so the daemon isn't running. The request was never
+/// sent, so it is safe to start the daemon and try again.
+/// </summary>
+internal sealed class DaemonUnavailableException : IOException
+{
+    public DaemonUnavailableException(string message, Exception inner) : base(message, inner) { }
+}
+
 /// <summary><c>pbx-voice ctl</c>: sends one request to the running daemon.</summary>
 internal static class ControlClient
 {
     public static async Task<string> SendAsync(string socketPath, string op, JsonElement args, CancellationToken ct)
     {
         using var socket = new Socket(AddressFamily.Unix, SocketType.Stream, ProtocolType.Unspecified);
-        await socket.ConnectAsync(new UnixDomainSocketEndPoint(socketPath), ct).ConfigureAwait(false);
+        try
+        {
+            await socket.ConnectAsync(new UnixDomainSocketEndPoint(socketPath), ct).ConfigureAwait(false);
+        }
+        catch (SocketException ex)
+        {
+            throw new DaemonUnavailableException($"the pbx-voice daemon is not running ({ex.SocketErrorCode})", ex);
+        }
         await using var stream = new NetworkStream(socket, ownsSocket: false);
         string request = JsonSerializer.Serialize(new { op, args }, Json.Compact) + "\n";
         await stream.WriteAsync(Encoding.UTF8.GetBytes(request), ct).ConfigureAwait(false);

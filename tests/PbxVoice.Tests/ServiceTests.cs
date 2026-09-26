@@ -109,4 +109,34 @@ public class ServiceTests
         Assert.True(s.GetProperty("registration").GetProperty("registered").GetBoolean());
         Assert.Equal(20, s.GetProperty("usage_today").GetProperty("calls_per_day").GetInt32());
     }
+
+    [Fact]
+    public async Task Shutdown_when_idle_stops_the_daemon()
+    {
+        using var h = new Harness();
+        var r = await h.Op("shutdown");
+        Assert.True(r.GetProperty("stopping").GetBoolean());
+        Assert.Equal(1, h.StopRequests);
+    }
+
+    [Fact]
+    public async Task Shutdown_is_refused_during_a_call_unless_forced()
+    {
+        using var h = new Harness();
+        h.Phone.Answer(new FakeCall(new[] { Replies.Speech(700) }));
+        h.Stt.Says("I'm up");
+        h.Stt.Delay = TimeSpan.FromMilliseconds(500);
+        await h.CallNow(new { type = "alarm", to = "me" });
+
+        var running = h.RunDue();
+        for (int i = 0; i < 200 && h.Executor.CurrentCallId is null; i++)
+            await Task.Delay(10);
+        Assert.NotNull(h.Executor.CurrentCallId);
+
+        Assert.Contains("in progress", await Refused(h, "shutdown", new { }));
+        Assert.Equal(0, h.StopRequests);
+        await h.Op("shutdown", new { force = true });
+        Assert.Equal(1, h.StopRequests);
+        await running;
+    }
 }

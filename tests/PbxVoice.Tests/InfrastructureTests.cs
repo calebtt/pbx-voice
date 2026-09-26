@@ -5,6 +5,7 @@ using PbxVoice.Audio;
 using PbxVoice.Calls;
 using PbxVoice.Control;
 using PbxVoice.Hosting;
+using PbxVoice.Mcp;
 using PbxVoice.Policy;
 using PbxVoice.Xai;
 using Xunit;
@@ -268,5 +269,150 @@ public class ControlSocketTests
         Assert.StartsWith("""{"ok":false""", error);
         Assert.Contains("self", error);
         Assert.Equal(StatePaths.FileMode, File.GetUnixFileMode(h.Paths.ControlSocket));
+    }
+
+    private static readonly JsonElement NoArgs = JsonDocument.Parse("{}").RootElement.Clone();
+
+    [Fact]
+    public async Task The_shim_starts_the_daemon_when_nothing_answers_and_sends_the_request_once()
+    {
+        if (OperatingSystem.IsWindows())
+            return;
+        using var h = new Harness();
+        ControlServer? server = null;
+        int starts = 0;
+        var backend = new SocketBackend(h.Paths.ControlSocket, _ =>
+        {
+            starts++;
+            server = new ControlServer(h.Paths.ControlSocket, h.Service.HandleAsync);
+            server.Start();
+            return Task.FromResult(new LaunchResult(true, "started"));
+        });
+        try
+        {
+            var first = await backend.CallAsync("list_contacts", NoArgs, CancellationToken.None);
+            var second = await backend.CallAsync("list_contacts", NoArgs, CancellationToken.None);
+            Assert.True(first.Ok, first.Error);
+            Assert.True(second.Ok, second.Error);
+            Assert.Equal(1, starts);
+        }
+        finally
+        {
+            if (server is not null)
+                await server.DisposeAsync();
+        }
+    }
+
+    [Fact]
+    public async Task A_failed_start_is_reported_and_without_auto_start_the_error_says_how_to_start()
+    {
+        using var h = new Harness();
+        var failing = new SocketBackend(h.Paths.ControlSocket, _ => Task.FromResult(new LaunchResult(false, "exited with code 2")));
+        var r = await failing.CallAsync("status", NoArgs, CancellationToken.None);
+        Assert.False(r.Ok);
+        Assert.Contains("exited with code 2", r.Error);
+
+        var plain = await new SocketBackend(h.Paths.ControlSocket).CallAsync("status", NoArgs, CancellationToken.None);
+        Assert.Contains("pbx-voice start", plain.Error);
+    }
+
+    [Fact]
+    public async Task A_request_that_reached_the_daemon_is_never_sent_again()
+    {
+        if (OperatingSystem.IsWindows())
+            return;
+        using var h = new Harness();
+        using var listener = new System.Net.Sockets.Socket(System.Net.Sockets.AddressFamily.Unix, System.Net.Sockets.SocketType.Stream, System.Net.Sockets.ProtocolType.Unspecified);
+        listener.Bind(new System.Net.Sockets.UnixDomainSocketEndPoint(h.Paths.ControlSocket));
+        listener.Listen(1);
+        var server = Task.Run(async () =>
+        {
+            // Read the request, then close without answering, as a daemon that crashed mid-call would.
+            using var client = await listener.AcceptAsync();
+            await client.ReceiveAsync(new byte[4096]);
+        });
+        int starts = 0;
+        var backend = new SocketBackend(h.Paths.ControlSocket, _ => { starts++; return Task.FromResult(new LaunchResult(true, "")); });
+
+        var r = await backend.CallAsync("call_now", JsonDocument.Parse("""{"type":"alarm","to":"me"}""").RootElement, CancellationToken.None);
+
+        await server;
+        Assert.False(r.Ok);
+        Assert.Contains("check the call with get_call", r.Error);
+        Assert.Equal(0, starts);
+    }
+
+    [Fact]
+    public void The_daemon_is_detached_with_its_output_and_exit_code_in_the_log()
+    {
+        var psi = Launcher.StartInfo("/opt/pbx-voice/pbx-voice", "/state/daemon.log");
+        var args = psi.ArgumentList.ToList();
+        Assert.Equal(new[] { "/opt/pbx-voice/pbx-voice", "/state/daemon.log" }, args.TakeLast(2));
+        string script = args[^3];
+        Assert.StartsWith("exec >>\"$1\" 2>&1 </dev/null;", script.TrimStart('(', ' '));
+        Assert.Contains("\"$0\" daemon; echo \"" + Launcher.ExitMarker + "$?\"", script);
+        if (File.Exists("/usr/bin/setsid") || File.Exists("/bin/setsid"))
+        {
+            Assert.EndsWith("setsid", psi.FileName);
+            Assert.Equal(new[] { "-f", "/bin/sh", "-c" }, args.Take(3));
+        }
+        Assert.False(psi.UseShellExecute);
+    }
+
+    [Fact]
+    public async Task The_launch_wrapper_logs_the_daemons_exit_code()
+    {
+        if (OperatingSystem.IsWindows())
+            return;
+        var dir = Directory.CreateTempSubdirectory("pbx-voice-launch-").FullName;
+        try
+        {
+            // A stand-in for the daemon that fails the way a missing policy does (exit code 2).
+            string fake = Path.Combine(dir, "fake-daemon");
+            File.WriteAllText(fake, "#!/bin/sh\necho \"no policy file\"\nexit 2\n");
+            File.SetUnixFileMode(fake, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+            string log = Path.Combine(dir, "daemon.log");
+            File.WriteAllText(log, "earlier run\n" + Launcher.ExitMarker + "0\n");
+            long offset = new FileInfo(log).Length;
+
+            using (var p = System.Diagnostics.Process.Start(Launcher.StartInfo(fake, log))!)
+                await p.WaitForExitAsync();
+            int? code = null;
+            for (int i = 0; i < 100 && code is null; i++)
+            {
+                await Task.Delay(20);
+                code = Launcher.ExitCodeSince(log, offset);
+            }
+
+            Assert.Equal(2, code);
+            Assert.Contains("no policy file", File.ReadAllText(log));
+        }
+        finally
+        {
+            Directory.Delete(dir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void A_log_over_10_MB_is_rotated()
+    {
+        var dir = Directory.CreateTempSubdirectory("pbx-voice-log-").FullName;
+        try
+        {
+            string log = Path.Combine(dir, "daemon.log");
+            File.WriteAllText(log, "small");
+            Launcher.RotateLog(log);
+            Assert.True(File.Exists(log));
+
+            using (var fs = File.OpenWrite(log))
+                fs.SetLength(Launcher.MaxLogBytes + 1);
+            Launcher.RotateLog(log);
+            Assert.False(File.Exists(log));
+            Assert.True(File.Exists(log + ".1"));
+        }
+        finally
+        {
+            Directory.Delete(dir, recursive: true);
+        }
     }
 }

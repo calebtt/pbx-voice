@@ -106,6 +106,13 @@ internal sealed class McpHttpFront : IAsyncDisposable
 /// </summary>
 internal static class McpStdio
 {
+    /// <summary>
+    /// The shim starts the daemon when it isn't running (Grok Bot's computer has no service
+    /// manager). PBX_VOICE_AUTOSTART=0 turns that off.
+    /// </summary>
+    private static Func<CancellationToken, Task<LaunchResult>>? AutoStart(StatePaths paths) =>
+        Environment.GetEnvironmentVariable("PBX_VOICE_AUTOSTART") == "0" ? null : ct => Launcher.EnsureRunningAsync(paths, ct);
+
     public static async Task<int> RunAsync(CancellationToken ct)
     {
         var paths = StatePaths.FromEnvironment();
@@ -113,7 +120,7 @@ internal static class McpStdio
         builder.Logging.ClearProviders();
         builder.Services.AddMcpServer(o => o.ServerInfo = new() { Name = "pbx-voice", Version = DaemonHost.Version })
             .WithStdioServerTransport()
-            .WithTools(new PbxVoiceTools(new SocketBackend(paths.ControlSocket), new PlacementRateLimiter(TimeProvider.System)), Json.Compact);
+            .WithTools(new PbxVoiceTools(new SocketBackend(paths.ControlSocket, AutoStart(paths)), new PlacementRateLimiter(TimeProvider.System)), Json.Compact);
         await builder.Build().RunAsync(ct).ConfigureAwait(false);
         return 0;
     }

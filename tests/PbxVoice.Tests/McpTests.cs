@@ -241,7 +241,7 @@ public class SocketBackendTests
 
         var down = await tools.ListContacts();
         Assert.True(down.IsError);
-        Assert.Contains("not reachable", ((TextContentBlock)down.Content[0]).Text);
+        Assert.Contains("not running", ((TextContentBlock)down.Content[0]).Text);
 
         await using var server = new ControlServer(h.Paths.ControlSocket, h.Service.HandleAsync);
         server.Start();

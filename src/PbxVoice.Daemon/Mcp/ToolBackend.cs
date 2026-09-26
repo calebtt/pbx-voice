@@ -1,5 +1,6 @@
 using System.Text.Json;
 using PbxVoice.Control;
+using PbxVoice.Hosting;
 using PbxVoice.Service;
 
 namespace PbxVoice.Mcp;
@@ -44,19 +45,42 @@ internal sealed class ServiceBackend : IToolBackend
 internal sealed class SocketBackend : IToolBackend
 {
     private readonly string _socketPath;
+    private readonly Func<CancellationToken, Task<LaunchResult>>? _ensureRunning;
 
-    public SocketBackend(string socketPath) => _socketPath = socketPath;
+    /// <param name="ensureRunning">
+    /// Starts the daemon when nothing answers. The request is retried only then: a request that
+    /// reached the daemon is never sent twice, so a call can't be placed twice.
+    /// </param>
+    public SocketBackend(string socketPath, Func<CancellationToken, Task<LaunchResult>>? ensureRunning = null)
+    {
+        _socketPath = socketPath;
+        _ensureRunning = ensureRunning;
+    }
 
     public async Task<BackendResult> CallAsync(string op, JsonElement args, CancellationToken ct)
     {
         string line;
         try
         {
-            line = await ControlClient.SendAsync(_socketPath, op, args, ct).ConfigureAwait(false);
+            try
+            {
+                line = await ControlClient.SendAsync(_socketPath, op, args, ct).ConfigureAwait(false);
+            }
+            catch (DaemonUnavailableException) when (_ensureRunning is not null)
+            {
+                var started = await _ensureRunning(ct).ConfigureAwait(false);
+                if (!started.Ok)
+                    return BackendResult.Failure($"the pbx-voice daemon is not running, and starting it failed: {started.Message}");
+                line = await ControlClient.SendAsync(_socketPath, op, args, ct).ConfigureAwait(false);
+            }
+        }
+        catch (DaemonUnavailableException ex)
+        {
+            return BackendResult.Failure($"{ex.Message}; start it with `pbx-voice start`");
         }
         catch (Exception ex) when (ex is System.Net.Sockets.SocketException or IOException)
         {
-            return BackendResult.Failure($"the pbx-voice daemon is not reachable ({ex.Message}); is `pbx-voice daemon` running?");
+            return BackendResult.Failure($"the connection to the pbx-voice daemon failed ({ex.Message}); check the call with get_call before trying again");
         }
         using var doc = JsonDocument.Parse(line);
         var root = doc.RootElement;

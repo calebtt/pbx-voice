@@ -90,7 +90,7 @@ pbx-voice places a call when it's asked to (`call_now`) and has no scheduler of 
 - **On Grok Bot:** ask the bot for the call, for example "wake me up at 5:30 on weekdays". It creates a routine for that time (a Weekdays routine at 5:30). The routine's instruction places the call with `call_now`, waits with `wait_for_call` until there's an outcome, and reports it. Routines only repeat, so for a one-off call the bot deletes the routine after it runs.
 - **Allow the pbx-voice tools without approval for routines.** An approval requested by a routine expires after about 10 minutes, so an alarm waiting for one never rings.
 - **Keep waiting while it's `in_progress`.** An alarm that redials can take about 20 minutes, and `wait_for_call` waits at most 900 s, so the agent calls it again until there's an outcome.
-- **On an always-on host, cron works too:** `30 5 * * 1-5 pbx-voice ctl call_now '{"type":"alarm","to":"me"}'`.
+- **From cron:** `30 5 * * 1-5 pbx-voice start && pbx-voice ctl call_now '{"type":"alarm","to":"me"}'`.
 
 The daemon still enforces the policy (contacts, quiet hours, caps) on every call, whoever asked for it.
 
@@ -118,9 +118,14 @@ Run it:
 
 ```bash
 ./dist/pbx-voice daemon                   # foreground; logs to stderr
+./dist/pbx-voice start                    # or in the background; logs to daemon.log in the state directory
+./dist/pbx-voice stop                     # refused during a call unless --force
 ```
 
-or as a systemd user service with [`docs/pbx-voice.service`](docs/pbx-voice.service). Only one daemon runs per extension. The ASP.NET Core runtime is included in the self-contained build; a framework-dependent build needs the ASP.NET Core 8 runtime.
+or as a systemd user service with [`docs/pbx-voice.service`](docs/pbx-voice.service).
+- **Without a service manager** (Grok Bot's computer has none): connect the agent through the stdio shim (below). It starts the daemon when a tool call finds it isn't running, so nothing needs to keep it running between calls.
+- **Detached:** a daemon started by `start` or the shim runs in its own session and isn't the shim's child, so it outlives the agent session that started it.
+- **One daemon per extension.** A second start finds the running one and uses it. The ASP.NET Core runtime is included in the self-contained build; a framework-dependent build needs the ASP.NET Core 8 runtime.
 
 ## Connecting an agent (MCP)
 
@@ -140,7 +145,7 @@ url = "http://127.0.0.1:8765/mcp"
 headers = { "Authorization" = "Bearer ${PBX_VOICE_MCP_TOKEN}" }
 ```
 
-or through the stdio shim, which forwards to the running daemon's control socket and needs no token (same user only):
+or through the stdio shim, which forwards to the daemon's control socket, starts the daemon if it isn't running (`PBX_VOICE_AUTOSTART=0` turns that off), and needs no token (same user only):
 
 ```toml
 [mcp_servers.pbx-voice]

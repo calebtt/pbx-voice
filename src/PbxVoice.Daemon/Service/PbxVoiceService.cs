@@ -21,6 +21,9 @@ internal sealed class HostStatus
     public string StateDirectory { get; init; } = "";
     public bool XaiKeyPresent { get; init; }
     public Func<(DateTimeOffset At, int? Status)?> LastPing { get; init; } = () => null;
+
+    /// <summary>Stops the daemon (the <c>shutdown</c> operation behind <c>pbx-voice stop</c>).</summary>
+    public Action? RequestStop { get; init; }
 }
 
 /// <summary>
@@ -55,7 +58,7 @@ internal sealed partial class PbxVoiceService
 
     public static readonly string[] Operations =
     {
-        "call_now", "wait_for_call", "cancel_call", "list_calls", "get_call", "list_contacts", "status",
+        "call_now", "wait_for_call", "cancel_call", "list_calls", "get_call", "list_contacts", "status", "shutdown",
     };
 
     public Task<object> HandleAsync(string op, JsonElement args, CancellationToken ct) => op switch
@@ -67,6 +70,7 @@ internal sealed partial class PbxVoiceService
         "get_call" => Task.FromResult(GetCall(args)),
         "list_contacts" => Task.FromResult(ListContacts()),
         "status" => Task.FromResult(Status()),
+        "shutdown" => Task.FromResult(Shutdown(args)),
         _ => throw new ServiceError($"unknown operation '{op}'; known: {string.Join(", ", Operations)}"),
     };
 
@@ -295,6 +299,22 @@ internal sealed partial class PbxVoiceService
     {
         string id = Str(args, "call_id") ?? throw new ServiceError("'call_id' is required");
         return CallView(_calls.Snapshot(id) ?? throw new ServiceError($"no call '{id}'"));
+    }
+
+    /// <summary>
+    /// Operator only: the MCP tools don't offer it. Refused while a call is in progress unless
+    /// forced; queued calls wait for the next start (and are missed after their grace window).
+    /// </summary>
+    private object Shutdown(JsonElement args)
+    {
+        if (_host.RequestStop is null)
+            throw new ServiceError("this daemon can't be stopped through the control socket");
+        bool force = args.TryGetProperty("force", out var f) && f.ValueKind == JsonValueKind.True;
+        if (_executor.CurrentCallId is { } current && !force)
+            throw new ServiceError($"a call is in progress ({current}); wait for it to finish, or stop with --force");
+        int pending = _calls.Open().Count(r => r.Status == CallStatus.Pending);
+        _host.RequestStop();
+        return new { stopping = true, pending_calls = pending };
     }
 
     private object ListContacts()

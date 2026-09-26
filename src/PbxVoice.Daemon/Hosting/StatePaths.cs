@@ -47,6 +47,9 @@ internal sealed class StatePaths
     /// <summary>The operator's conversation prompt (optional; the built-in default applies without it).</summary>
     public string ConversationPrompt => Path.Combine(Root, "conversation-prompt.txt");
 
+    /// <summary>Where a daemon started by <c>pbx-voice start</c> or the stdio shim writes its log.</summary>
+    public string DaemonLog => Path.Combine(Root, "daemon.log");
+
     public static StatePaths FromEnvironment() => new(ResolveRoot(Environment.GetEnvironmentVariable));
 
     public static string ResolveRoot(Func<string, string?> env)

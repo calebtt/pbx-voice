@@ -26,8 +26,11 @@ internal sealed class DaemonHost
     public static string Version =>
         typeof(DaemonHost).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion.Split('+')[0] ?? "0.0.0";
 
-    public static async Task<int> RunAsync(CancellationToken stop)
+    public static async Task<int> RunAsync(CancellationToken stopSignal)
     {
+        // SIGTERM, Ctrl+C, or `pbx-voice stop` (the shutdown operation).
+        using var shutdown = CancellationTokenSource.CreateLinkedTokenSource(stopSignal);
+        var stop = shutdown.Token;
         Func<string, string?> env = Environment.GetEnvironmentVariable;
         var paths = StatePaths.FromEnvironment();
         paths.EnsureCreated();
@@ -115,6 +118,11 @@ internal sealed class DaemonHost
             StateDirectory = paths.Root,
             XaiKeyPresent = secrets.HasXaiKey,
             LastPing = () => lastPing,
+            RequestStop = () =>
+            {
+                Log.Information("Stop requested through the control socket");
+                shutdown.Cancel();
+            },
         };
         var service = new PbxVoiceService(time, policy, calls, clips, executor, phone, host);
         await using var control = new ControlServer(paths.ControlSocket, service.HandleAsync);

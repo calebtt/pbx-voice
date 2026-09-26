@@ -12,7 +12,7 @@ internal interface ISpeechToText
     Task<SttResult> TranscribeMuLawAsync(byte[] muLaw, IReadOnlyList<string> keyTerms, CancellationToken ct);
 }
 
-/// <summary>Text-to-speech rendered to 8 kHz μ-law when a call is scheduled.</summary>
+/// <summary>Text-to-speech rendered to 8 kHz μ-law when a call is requested.</summary>
 internal interface ITextToSpeech
 {
     Task<byte[]> SynthesizeMuLawAsync(string text, string voice, string language, double speed, CancellationToken ct);

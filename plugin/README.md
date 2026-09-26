@@ -1,45 +1,43 @@
-# pbx-voice Grok plugin
+# pbx-voice for Grok
 
-This plugin gives Grok the pbx-voice MCP tools and a skill that explains how to use them. The calls themselves are placed by the pbx-voice daemon, which you install and run separately (see the main [README](../README.md)); plugins deliver files, not programs.
+This folder gives Grok the pbx-voice MCP tools and a skill that explains how to use them (`skills/pbx-voice/SKILL.md`). The calls are placed by the pbx-voice daemon on the same computer. The MCP server, `pbx-voice mcp-stdio`, starts the daemon when a tool call finds it isn't running, so nothing has to keep it running between calls.
 
-## Install
+pbx-voice has no scheduler. For a call at a set time, the agent creates a routine that places the call then; the skill explains how.
 
-1. Install and start the daemon, and create its `policy.json` (main README, "Setup").
-2. Give Grok the daemon's token and, if it isn't on this machine, its URL:
+## Install on Grok Bot
+
+Grok Bot doesn't install plugins from a git repository (its Marketplace holds connectors to services), so you give the bot the pieces. Grok Bot's official documentation doesn't cover custom MCP servers yet; step 2 follows a [third-party guide](https://composio.dev/content/how-to-add-mcp-servers-to-grok-bot), so check the result with step 5.
+
+1. **Unpack the release under `/workspace`** on the bot's computer. Files there survive computer updates; installed programs and files elsewhere may not. Then create the policy and secrets:
    ```bash
-   # The daemon writes the token on first start; `pbx-voice paths` shows where.
-   export PBX_VOICE_MCP_TOKEN="$(cat ~/.local/state/pbx-voice/mcp-token)"
-   # Only for a daemon on another host (behind HTTPS):
-   # export PBX_VOICE_MCP_URL=https://pbx-voice.example.com/mcp
+   mkdir -p /workspace/pbx-voice
+   tar -C /workspace/pbx-voice --strip-components=1 -xzf pbx-voice-<version>-linux-x64.tar.gz
+   mkdir -p -m 700 /workspace/pbx-voice/state
+   cp /workspace/pbx-voice/policy.example.json /workspace/pbx-voice/state/policy.json   # then edit it
+   install -m 600 /workspace/pbx-voice/secrets.env.example /workspace/pbx-voice/state/secrets.env   # then edit it
+   /workspace/pbx-voice/pbx-voice selftest
    ```
-3. Add this repository as a marketplace and install the plugin:
+2. **Add the MCP server.** In a chat with the bot:
+   > Add a custom MCP server called pbx-voice that runs: `env SIPBOT_STATE_DIR=/workspace/pbx-voice/state /workspace/pbx-voice/pbx-voice mcp-stdio`
+
+   It's listed under Settings → Plugins → Yours, and every bot on your account can use it. When it starts the daemon, the daemon logs to `/workspace/pbx-voice/state/daemon.log`.
+3. **Add the skill.** The release includes it as `SKILL.md`:
+   > Create a skill called pbx-voice from the instructions in /workspace/pbx-voice/SKILL.md
+4. **Allow the pbx-voice tools without approval** (Auto-review: Always allow). Routines that place calls need this: an approval that a routine asks for expires after about 10 minutes, so an alarm waiting for one never rings.
+5. **Check it:** ask the bot to run the pbx-voice `status` tool. `registration.registered` and `pbx.reachable` should both be `true`. The first call starts the daemon, which takes a few seconds to register, so if they aren't yet, ask again.
+
+On Grok Bot:
+- **The computer has no systemd,** so the unit file in the release doesn't apply. The MCP server starts the daemon. To start or stop it by hand, set `SIPBOT_STATE_DIR=/workspace/pbx-voice/state` and run `pbx-voice start` or `pbx-voice stop`.
+- **After Update Computer,** nothing needs reinstalling: the binary and state are in `/workspace`, and the next tool call starts the daemon.
+- **The agent shares the daemon's user account.** It can read the secrets and edit the policy, so the policy guides it but can't bind it. See [docs/security.md](../docs/security.md) for what does hold.
+
+## Install on the Grok CLI
+
+1. Put the `pbx-voice` binary on your `PATH` (for example `~/.local/bin/pbx-voice`), and create `policy.json` and `secrets.env` in its state directory (`pbx-voice paths` shows where; see the main [README](../README.md), "Setup").
+2. Add this repository as a marketplace and install the plugin:
    ```bash
    grok plugin marketplace add calebtt/pbx-voice
    grok plugin install pbx-voice
    ```
 
-`.mcp.json` connects to `${PBX_VOICE_MCP_URL:-http://127.0.0.1:8765/mcp}` with `Authorization: Bearer ${PBX_VOICE_MCP_TOKEN}`. The token stays in your environment, not in any file here.
-
-## Running on Grok Bot
-
-Grok Bot runs the daemon on its own cloud computer, which all of your bots share.
-- **Keep everything under `/workspace`.** Files there survive computer updates; installed programs and files elsewhere may not. Unpack the release there, and point the state directory there too:
-  ```bash
-  mkdir -p /workspace/pbx-voice
-  tar -C /workspace/pbx-voice --strip-components=1 -xzf pbx-voice-<version>-linux-x64.tar.gz
-  export SIPBOT_STATE_DIR=/workspace/pbx-voice/state   # for the daemon, `ctl`, and `paths`
-  ```
-- **Start the daemon in the background.** The computer has no systemd, so the unit file in the tarball doesn't apply, and nothing restarts the daemon after a crash or Update Computer:
-  ```bash
-  setsid nohup /workspace/pbx-voice/pbx-voice daemon >> /workspace/pbx-voice/daemon.log 2>&1 &
-  ```
-- **Calls at a set time come from your bot's routines,** not from the daemon: the routine places the call with `call_now` and waits for the outcome (the skill explains how). Allow the pbx-voice tools without approval (Auto-review: Always allow), because an approval a routine asks for expires after about 10 minutes. The daemon has to be running when the routine fires; unofficial reports say the computer sleeps when idle, which would stop it.
-- **The agent shares the daemon's user account.** It can read the secrets and edit the policy, so the policy guides it but can't bind it. See [docs/security.md](../docs/security.md) for what does hold.
-
-To use the stdio shim instead of HTTP (same machine, same user), configure the server yourself:
-
-```toml
-[mcp_servers.pbx-voice]
-command = "pbx-voice"
-args = ["mcp-stdio"]
-```
+`.mcp.json` runs `pbx-voice mcp-stdio` from your `PATH`. For a daemon on another host, connect over HTTP instead (main README, "Connecting an agent").

@@ -138,8 +138,8 @@ internal static class BuiltinClips
 }
 
 /// <summary>
-/// Rendered clips in <c>clips/{sha256}.wav</c>, keyed by text, voice, language, and speed, so a
-/// recurring call's clips are rendered once.
+/// Rendered clips in <c>clips/{sha256}.wav</c>, keyed by text, voice, language, and speed, so text
+/// that repeats, such as the same wake-up prompt every morning, is rendered once.
 /// </summary>
 internal sealed class ClipStore
 {

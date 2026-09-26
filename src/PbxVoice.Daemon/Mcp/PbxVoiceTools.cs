@@ -49,13 +49,13 @@ internal sealed class OptionsInput
     [Description("Call again after no answer, busy, or (alarm) no acknowledgment. Default true; false means one attempt.")]
     public bool? Redial { get; set; }
 
-    [Description("Attempts in total. Defaults: alarm 5, message 2. Capped by policy.")]
+    [Description("Attempts in total. Defaults: alarm 5, message 2, conversation 2. Capped by policy.")]
     public int? MaxAttempts { get; set; }
 
-    [Description("Minutes between attempts. Defaults: alarm 3, message 10.")]
+    [Description("Minutes between attempts. Defaults: alarm 3, message 10, conversation 10.")]
     public int? RetryMinutes { get; set; }
 
-    [Description("Seconds to let it ring, counted from when it starts ringing. Defaults: alarm 45, message 30.")]
+    [Description("Seconds to let it ring, counted from when it starts ringing. Defaults: alarm 45, message 30, conversation 7.")]
     public int? RingSeconds { get; set; }
 
     [Description("Alarm only: minutes before calling back after the callee says \"snooze\". Default 10.")]
@@ -96,7 +96,7 @@ internal sealed class PbxVoiceTools
     public Task<CallToolResult> CallNow(
         [Description("\"alarm\", \"message\", or \"conversation\".")] string type,
         [Description("Contact name from list_contacts.")] string to,
-        [Description("Message: the words to speak (required). Alarm: optional wake-up prompt.")] string? text = null,
+        [Description("Message: the words to speak (required). Alarm: an optional wake-up prompt; {time} becomes the time of the call.")] string? text = null,
         [Description("Conversation only: what the call is for (required for conversation).")] BriefInput? brief = null,
         [Description("Optional per-call settings.")] OptionsInput? options = null,
         CancellationToken ct = default)
@@ -109,8 +109,9 @@ internal sealed class PbxVoiceTools
     [McpServerTool(Name = "wait_for_call", ReadOnly = true)]
     [Description(
         "Wait until a call has its final outcome, up to timeout_sec (at most 900), and return the call record. " +
-        "If it is still running (for example an alarm waiting to redial), the result is status \"in_progress\" with the " +
-        "latest attempt. Never guess an outcome; check later with get_call. Report the outcome exactly as recorded.")]
+        "If it is still running (for example an alarm waiting to redial or snoozing; an alarm can take about 20 minutes), " +
+        "the result is status \"in_progress\" with the latest attempt: call wait_for_call again. Never guess an outcome. " +
+        "Report the outcome exactly as recorded.")]
     public Task<CallToolResult> WaitForCall(
         [Description("The call_id from call_now or list_calls.")] string call_id,
         [Description("Seconds to wait, 1-900. Default 300.")] int timeout_sec = 300,

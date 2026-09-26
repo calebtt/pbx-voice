@@ -277,7 +277,7 @@ internal sealed partial class PbxVoiceService
         int limit = args.TryGetProperty("limit", out var l) && l.TryGetInt32(out var n) ? Math.Clamp(n, 1, 200) : 20;
         return _calls.SnapshotAll()
             .Where(r => r.CreatedAt >= since)
-            .OrderByDescending(r => r.FireTime)
+            .OrderByDescending(r => r.CreatedAt)
             .Take(limit)
             .Select(r => new
             {
@@ -287,7 +287,7 @@ internal sealed partial class PbxVoiceService
                 status = r.Status,
                 outcome = r.Outcome,
                 reason = r.Reason,
-                fire_time = r.FireTime,
+                created_at = r.CreatedAt,
                 completed_at = r.CompletedAt,
                 attempts = r.Attempts.Count,
                 ack_source = r.AckSource,
@@ -366,7 +366,6 @@ internal sealed partial class PbxVoiceService
         outcome = r.Outcome,
         reason = r.Reason,
         ack_source = r.AckSource,
-        fire_time = r.FireTime,
         created_at = r.CreatedAt,
         completed_at = r.CompletedAt,
         next_attempt_at = r.NextAttemptAt,

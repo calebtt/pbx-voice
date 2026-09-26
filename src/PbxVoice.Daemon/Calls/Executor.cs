@@ -42,7 +42,7 @@ internal sealed class Executor
         _listener = listener;
     }
 
-    /// <summary>How long after its fire time a call may still start (PR-SCHED-4).</summary>
+    /// <summary>How long after it was requested a call may still start (PR-SCHED-4), for example behind another call.</summary>
     public static TimeSpan Grace(CallType type) => type == CallType.Alarm ? TimeSpan.FromMinutes(15) : TimeSpan.FromMinutes(5);
 
     /// <summary>How long to wait for a PR-REG-9 re-register to succeed before dialing anyway.</summary>

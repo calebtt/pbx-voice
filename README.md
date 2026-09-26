@@ -87,7 +87,7 @@ If the voice session can't open within 3 s, a brief with a message falls back to
 ## Calling at a set time
 
 pbx-voice places a call when it's asked to (`call_now`) and has no scheduler of its own. The agent's scheduler decides when: a Grok Bot routine, cron, or anything else that can run the agent or a command at a set time.
-- **On Grok Bot:** ask the bot for the call, for example "wake me up at 5:30 on weekdays". It creates a routine for that time (a Weekdays routine at 5:30). The routine's instruction places the call with `call_now`, waits with `wait_for_call` until there's an outcome, and reports it. Routines only repeat, so for a one-off call the bot deletes the routine after it runs.
+- **On Grok Bot:** ask the bot for the call, for example "wake me up at 5:30 on weekdays". It creates a routine for that time (a Weekdays routine at 5:30). The routine's instruction places the call with `call_now`, waits with `wait_for_call` until there's an outcome, and reports it. The documented routine schedules all repeat, so for a one-off call the bot deletes the routine after its first run.
 - **Allow the pbx-voice tools without approval for routines.** An approval requested by a routine expires after about 10 minutes, so an alarm waiting for one never rings.
 - **Keep waiting while it's `in_progress`.** An alarm that redials can take about 20 minutes, and `wait_for_call` waits at most 900 s, so the agent calls it again until there's an outcome.
 - **From cron:** `30 5 * * 1-5 pbx-voice start && pbx-voice ctl call_now '{"type":"alarm","to":"me"}'`.
@@ -129,31 +129,30 @@ or as a systemd user service with [`docs/pbx-voice.service`](docs/pbx-voice.serv
 
 ## Connecting an agent (MCP)
 
-The daemon serves MCP at `http://127.0.0.1:8765/mcp` (Streamable HTTP). Every request needs the bearer token the daemon writes to `mcp-token` in the state directory on first start. `pbx-voice mcp-token` prints the endpoint and header.
-
 Tools: `call_now`, `wait_for_call`, `cancel_call`, `list_calls`, `get_call`, `list_contacts`, `status`.
 - Policy refusals come back as tool errors with the reason.
 - Placing calls is rate-limited (10 a minute, 60 an hour) on top of the policy's daily cap.
 - Results stay under 20,000 bytes: long transcripts are shortened, and `truncated: true` says so.
 - Any result that carries the callee's words includes an `untrusted_callee_speech` notice.
 
-Grok (`~/.grok/config.toml`), over HTTP:
+**When the agent runs on the same computer** (Grok Bot, or the Grok CLI), connect through the stdio shim, `pbx-voice mcp-stdio`. It forwards to the daemon's control socket, and it starts the daemon if a tool call finds it isn't running (`PBX_VOICE_AUTOSTART=0` turns that off). It needs no token, and it works for the same user only.
+- **Grok Bot:** see [plugin/README.md](plugin/README.md#install-on-grok-bot).
+- **Grok CLI** (`~/.grok/config.toml`), or install the plugin (`plugin/`), which configures this for you:
+  ```toml
+  [mcp_servers.pbx-voice]
+  command = "/home/you/.local/bin/pbx-voice"
+  args = ["mcp-stdio"]
+  ```
+
+**When the daemon runs on another host,** the agent connects over HTTP. The daemon serves MCP at `http://127.0.0.1:8765/mcp` (Streamable HTTP). Every request needs the bearer token the daemon writes to `mcp-token` in the state directory on first start; `pbx-voice mcp-token` prints the endpoint and header. The daemon must already be running, because HTTP can't start it.
 
 ```toml
 [mcp_servers.pbx-voice]
-url = "http://127.0.0.1:8765/mcp"
+url = "https://pbx-voice.example.com/mcp"
 headers = { "Authorization" = "Bearer ${PBX_VOICE_MCP_TOKEN}" }
 ```
 
-or through the stdio shim, which forwards to the daemon's control socket, starts the daemon if it isn't running (`PBX_VOICE_AUTOSTART=0` turns that off), and needs no token (same user only):
-
-```toml
-[mcp_servers.pbx-voice]
-command = "/home/you/.local/bin/pbx-voice"
-args = ["mcp-stdio"]
-```
-
-- **Listen address:** `PBX_VOICE_MCP_LISTEN` changes it (`host:port`, or `off`). On a separate host (deployment mode B), keep it on loopback and publish it through an HTTPS reverse proxy; the daemon warns if it listens elsewhere.
+- **Listen address:** `PBX_VOICE_MCP_LISTEN` changes it (`host:port`, or `off`). On a separate host, keep it on loopback and publish it through an HTTPS reverse proxy; the daemon warns if it listens elsewhere.
 - **Protecting the token:** anyone with the token can place calls to your contacts, so treat it like a password.
 
 ## Using it (operator CLI)
@@ -162,7 +161,7 @@ args = ["mcp-stdio"]
 pbx-voice ctl status
 pbx-voice ctl list_contacts
 
-# A wake-up call now; says "Good morning, it's 5:30 AM. Say 'I'm up' when you're awake."
+# A wake-up call now; says "Good morning, it's <the time now>. Say 'I'm up' when you're awake."
 pbx-voice ctl call_now '{"type":"alarm","to":"me","options":{"max_attempts":3}}'
 
 # A message, then wait for the result

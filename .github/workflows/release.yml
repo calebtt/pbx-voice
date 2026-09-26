@@ -30,7 +30,7 @@ jobs:
               -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:Version="$version" -o "$dir"
             # Debug symbols, XML docs, and a Windows-only codec DLL from SIPSorcery are not needed at run time.
             rm -f "${dir:?}"/*.pdb "${dir:?}"/*.xml "${dir:?}"/*.dll
-            cp README.md LICENSE docs/policy.example.json docs/secrets.env.example docs/pbx-voice.service "$dir"/
+            cp README.md LICENSE docs/policy.example.json docs/secrets.env.example docs/pbx-voice.service plugin/skills/pbx-voice/SKILL.md "$dir"/
             tar -C out -czf "pbx-voice-$version-$rid.tar.gz" "pbx-voice-$version-$rid"
           done
           sha256sum pbx-voice-*.tar.gz > SHA256SUMS

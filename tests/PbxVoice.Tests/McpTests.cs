@@ -44,6 +44,14 @@ public class McpTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task A_taken_port_fails_with_the_IOException_the_daemon_reports()
+    {
+        var tools = new PbxVoiceTools(new ServiceBackend(_h.Service), new PlacementRateLimiter(_h.Time));
+        var taken = new IPEndPoint(IPAddress.Loopback, _front.Endpoint.Port);
+        await Assert.ThrowsAsync<IOException>(() => McpHttpFront.StartAsync(taken, Token, tools, CancellationToken.None));
+    }
+
+    [Fact]
     public async Task The_ten_tools_are_listed_with_descriptions()
     {
         var tools = await _client.ListToolsAsync();

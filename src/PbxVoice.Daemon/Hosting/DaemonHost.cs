@@ -144,7 +144,17 @@ internal sealed class DaemonHost
                 Log.Warning("MCP listens on {Address}, which is not loopback: put it behind an HTTPS reverse proxy (deployment mode B)", endpoint);
             string token = McpHttpFront.LoadOrCreateToken(paths.McpToken);
             var tools = new PbxVoiceTools(new ServiceBackend(service), new PlacementRateLimiter(time));
-            mcp = await McpHttpFront.StartAsync(endpoint, token, tools, stop).ConfigureAwait(false);
+            try
+            {
+                mcp = await McpHttpFront.StartAsync(endpoint, token, tools, stop).ConfigureAwait(false);
+            }
+            catch (IOException ex)
+            {
+                // Kestrel reports a taken port as an IOException wrapping AddressInUseException.
+                Log.Error("Cannot listen for MCP on {Address}: {Error}. Stop whatever is using it, or set PBX_VOICE_MCP_LISTEN to another host:port (or off)",
+                    endpoint, ex.InnerException?.Message ?? ex.Message);
+                return 5;
+            }
             Log.Information("MCP front on {Endpoint} (bearer token in {TokenFile})", mcp.Endpoint, paths.McpToken);
         }
         await using var mcpLifetime = mcp;

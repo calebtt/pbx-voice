@@ -40,8 +40,9 @@
     "repeat":  ["repeat", "say that again", "what"]
   },
 
-  // xAI voice and language for rendered clips.
-  "speech": { "voice": "eve", "language": "en", "speed": 1.0 },
+  // xAI voice and language for rendered clips and conversation calls. realtime_reasoning "none"
+  // replies about a second after the callee stops talking; "high" thinks longer.
+  "speech": { "voice": "eve", "language": "en", "speed": 1.0, "realtime_model": "grok-voice-latest", "realtime_reasoning": "none" },
 
   // Register the extension. Keep this on unless outbound calls are known to work unregistered.
   "register": true,

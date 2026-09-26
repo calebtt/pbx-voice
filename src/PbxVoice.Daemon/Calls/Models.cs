@@ -13,6 +13,7 @@ internal enum Outcome
 {
     Awake, Played, NotAcknowledged, NotAnswered, Missed, Failed,
     Confirmed, PlayedUnconfirmed,
+    Completed, Partial, Declined, VoicemailLeft, DegradedToMessage,
     Cancelled,
 }
 
@@ -26,6 +27,8 @@ internal enum AttemptResult
     Awake, Played, NotAcknowledged, Snoozed,
     // Message, answered.
     Confirmed, PlayedUnconfirmed, HungUpEarly,
+    // Conversation, answered: the outcome is computed from the evidence (ConversationRecord).
+    Conversed,
 }
 
 internal enum AckSource { Stt, SpeechDetected, Keypad }
@@ -116,6 +119,8 @@ internal sealed class ClipSet
     /// <summary>Alarm: the wake-up prompt (voice) or wake-up message (none).</summary>
     public string? Prompt { get; set; }
     public string? Closing { get; set; }
+    /// <summary>Conversation: "sorry, {name} will call back", for an ask-only brief when the session cannot open.</summary>
+    public string? Apology { get; set; }
     public string? SnoozeAck { get; set; }
     /// <summary>Message: the message itself.</summary>
     public string? Message { get; set; }
@@ -194,11 +199,71 @@ internal sealed class CallRecord
     public AckSource? AckSource { get; set; }
     public int BilledSeconds { get; set; }
     public ReregisterRecord? Reregister { get; set; }
+    public ConversationRecord? Conversation { get; set; }
     public List<string> Notes { get; set; } = new();
     public DateTimeOffset? CompletedAt { get; set; }
 
     [JsonIgnore]
     public int CountedAttempts => Attempts.Count(a => !a.Snooze);
+}
+
+/// <summary>What a conversation call produced (PR-CONV-4 to PR-CONV-7). Model claims are kept apart from evidence.</summary>
+internal sealed class ConversationRecord
+{
+    public Brief Brief { get; set; } = new();
+    public int? SessionOpenMs { get; set; }
+    public bool MessageDelivered { get; set; }
+    public bool? MessageConfirmed { get; set; }
+    public bool ModelReportedConfirmation { get; set; }
+    public Dictionary<string, AnswerRecord> Answers { get; set; } = new();
+    public List<CalleeQuestion> CalleeQuestions { get; set; } = new();
+    public List<TurnRecord> Transcript { get; set; } = new();
+    public EndClaim? EndClaim { get; set; }
+    /// <summary>Why the call ended: end_call, callee_hung_up, max_minutes, session_ended, or session_failed.</summary>
+    public string? EndedBy { get; set; }
+    /// <summary>Computed by the daemon from the evidence, never taken from the model (PR-OUT-1).</summary>
+    public Outcome? Outcome { get; set; }
+    public string? OutcomeReason { get; set; }
+}
+
+internal sealed class AnswerRecord
+{
+    public string Value { get; set; } = "";
+    /// <summary>The callee's words as the model reported them.</summary>
+    public string Quote { get; set; } = "";
+    /// <summary><c>matched</c> when the quote is found in a callee turn after the question (PR-CONV-5), else <c>unmatched</c>.</summary>
+    public string Evidence { get; set; } = "unmatched";
+    public bool ReadbackConfirmed { get; set; }
+    public int RecordedSeq { get; set; }
+}
+
+internal sealed class CalleeQuestion
+{
+    public string Text { get; set; } = "";
+    public bool Answered { get; set; }
+}
+
+internal sealed class TurnRecord
+{
+    /// <summary>Order in the conversation.</summary>
+    public int Seq { get; set; }
+    /// <summary><c>assistant</c> or <c>callee</c>.</summary>
+    public string Role { get; set; } = "";
+    public string Text { get; set; } = "";
+    public int OffsetMs { get; set; }
+    /// <summary>True for the verbatim message (force_message).</summary>
+    public bool Scripted { get; set; }
+
+    [System.Text.Json.Serialization.JsonIgnore]
+    public string ItemId { get; set; } = "";
+}
+
+/// <summary>How the model said the call ended. Stored, and only used after the daemon's own check (PR-CONV-7).</summary>
+internal sealed class EndClaim
+{
+    /// <summary><c>done</c>, <c>voicemail</c>, <c>declined</c>, <c>wrong_person</c>, or <c>automated_system</c>.</summary>
+    public string Reason { get; set; } = "";
+    public string? Quote { get; set; }
 }
 
 /// <summary>A resolved dial target.</summary>

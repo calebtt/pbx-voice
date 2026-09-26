@@ -45,8 +45,28 @@ internal static class ResultShaper
             if (reply["transcript"]?.GetValue<string>() is { Length: > TranscriptChars } t)
                 reply["transcript"] = t[..TranscriptChars] + "…";
         }
+        foreach (var turn in Turns(node)?.OfType<JsonObject>() ?? Enumerable.Empty<JsonObject>())
+        {
+            if (turn["text"]?.GetValue<string>() is { Length: > TranscriptChars } t)
+                turn["text"] = t[..TranscriptChars] + "…";
+        }
         MarkTruncated(node);
         text = Serialize(node);
+
+        // 1b. Drop the oldest conversation turns; answers and their quotes stay.
+        if (Turns(node) is { } turns && Encoding.UTF8.GetByteCount(text) > MaxBytes)
+        {
+            int dropped = 0;
+            while (turns.Count > 4 && Encoding.UTF8.GetByteCount(text) > MaxBytes)
+            {
+                turns.RemoveAt(0);
+                dropped++;
+                if (dropped % 5 == 0)
+                    text = Serialize(node);
+            }
+            ((JsonObject)node!["conversation"]!)["transcript_truncated"] = true;
+            text = Serialize(node);
+        }
 
         // 2. Drop reply details from the oldest attempts, keeping the latest.
         if (Encoding.UTF8.GetByteCount(text) > MaxBytes && node is JsonObject call && call["attempts"] is JsonArray attempts)
@@ -75,7 +95,12 @@ internal static class ResultShaper
         return text;
     }
 
-    private static bool HasTranscripts(JsonObject obj) => Replies(obj).Any(r => r["transcript"] is not null);
+    private static bool HasTranscripts(JsonObject obj) =>
+        Replies(obj).Any(r => r["transcript"] is not null)
+        || obj["conversation"] is JsonObject c && (c["transcript"] is JsonArray { Count: > 0 } || c["answers"] is JsonObject { Count: > 0 });
+
+    /// <summary>Conversation transcript turns, oldest first.</summary>
+    private static JsonArray? Turns(JsonNode? node) => (node as JsonObject)?["conversation"]?["transcript"] as JsonArray;
 
     private static IEnumerable<JsonObject> Replies(JsonNode? node)
     {

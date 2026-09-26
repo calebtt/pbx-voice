@@ -2,6 +2,7 @@ using System.Reflection;
 using PbxVoice.Audio;
 using PbxVoice.Calls;
 using PbxVoice.Control;
+using PbxVoice.Conversation;
 using PbxVoice.Mcp;
 using PbxVoice.Policy;
 using PbxVoice.Scheduling;
@@ -100,7 +101,8 @@ internal sealed class DaemonHost
         var schedules = new ScheduleStore(paths.Schedules);
         using var phone = new SipPhoneLine(sipConfig, secrets.LocalSipPort, policy.Current.Register,
             () => policy.Current.InboundRejectStatus, vad, time);
-        var executor = new Executor(time, phone, policy, calls, clips, new ReplyListener(stt, time));
+        IVoiceSessionFactory? sessions = secrets.HasXaiKey ? new XaiVoiceSessionFactory(secrets["XAI_API_KEY"]!) : null;
+        var executor = new Executor(time, phone, policy, calls, clips, new ReplyListener(stt, time), sessions);
         executor.Recover();
 
         (DateTimeOffset At, int? Status)? lastPing = null;
@@ -187,7 +189,7 @@ internal sealed class DaemonHost
             due = schedules.CollectDue(now);
         foreach (var (s, fire) in due)
         {
-            var record = executor.Create(s.Id, s.Type, s.ToTarget(), s.Options, s.Clips, s.Text, fire, s.Notes);
+            var record = executor.Create(s.Id, s.Type, s.ToTarget(), s.Options, s.Clips, s.Text, fire, s.Notes, s.Brief);
             Log.Information("Schedule {ScheduleId} fired for {Fire:O}: call {CallId}", s.Id, fire, record.CallId);
         }
     }

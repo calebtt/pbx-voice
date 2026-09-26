@@ -63,8 +63,6 @@ internal static class PolicyGuard
     {
         if (type == CallType.Alarm && !target.Self)
             return $"an alarm can only call a contact marked self; '{target.Contact}' is not";
-        if (type == CallType.Conversation)
-            return "conversation calls are not available in this version";
         return null;
     }
 

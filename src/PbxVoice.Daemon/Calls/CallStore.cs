@@ -80,6 +80,18 @@ internal sealed class CallStore
             return _records.Values.Sum(r => r.Attempts.Count(a => a.StartedAt >= start && a.StartedAt < end));
     }
 
+    /// <summary>Answered conversation time in [start, end), for the daily conversation-minutes cap (PR-SAFE-4).</summary>
+    public int ConversationSecondsBetween(DateTimeOffset start, DateTimeOffset end)
+    {
+        lock (_lock)
+        {
+            return _records.Values.Where(r => r.Type == CallType.Conversation)
+                .SelectMany(r => r.Attempts)
+                .Where(a => a.AnsweredAt is { } t && t >= start && t < end)
+                .Sum(a => (int)Math.Ceiling(((a.EndedAt ?? a.AnsweredAt!.Value) - a.AnsweredAt!.Value).TotalSeconds));
+        }
+    }
+
     /// <summary>Deletes finished records created before <paramref name="cutoff"/> (PR-SAFE-7).</summary>
     public int Prune(DateTimeOffset cutoff)
     {

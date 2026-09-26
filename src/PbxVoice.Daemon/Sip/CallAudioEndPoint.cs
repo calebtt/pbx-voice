@@ -18,6 +18,8 @@ internal sealed class CallAudioEndPoint : BaseAudioEndPoint
     private int _realFramesSent;
     private SpeechDetector? _detector;
     private TaskCompletionSource<bool>? _captureDone;
+    private Action<byte[]>? _stream;
+    private readonly List<byte> _pendingOut = new();
 
     public CallAudioEndPoint() : base(enableContinuousKeepAlive: false, enableWidebandAudio: false)
     {
@@ -57,6 +59,44 @@ internal sealed class CallAudioEndPoint : BaseAudioEndPoint
         }
     }
 
+    public void StartStreaming(Action<byte[]> sink)
+    {
+        lock (_lock)
+            _stream = sink;
+    }
+
+    public void StopStreaming()
+    {
+        lock (_lock)
+            _stream = null;
+    }
+
+    /// <summary>8 kHz PCM in, μ-law 20 ms frames to the pacer; a partial frame waits for the next chunk.</summary>
+    public void EnqueuePcm(ReadOnlySpan<byte> pcm)
+    {
+        var samples = new short[pcm.Length / 2];
+        for (int i = 0; i < samples.Length; i++)
+            samples[i] = (short)(pcm[2 * i] | (pcm[2 * i + 1] << 8));
+        byte[] frames;
+        lock (_pendingOut)
+        {
+            _pendingOut.AddRange(Audio.G711.Encode(samples));
+            int whole = _pendingOut.Count / 160 * 160;
+            if (whole == 0)
+                return;
+            frames = _pendingOut.GetRange(0, whole).ToArray();
+            _pendingOut.RemoveRange(0, whole);
+        }
+        Pacer.Enqueue(frames);
+    }
+
+    public void ClearPlayback()
+    {
+        lock (_pendingOut)
+            _pendingOut.Clear();
+        Pacer.ResetBuffer();
+    }
+
     public void DisarmCapture()
     {
         lock (_lock)
@@ -70,11 +110,15 @@ internal sealed class CallAudioEndPoint : BaseAudioEndPoint
     {
         SpeechDetector? detector;
         TaskCompletionSource<bool>? done;
+        Action<byte[]>? stream;
         lock (_lock)
         {
             detector = _detector;
             done = _captureDone;
+            stream = _stream;
         }
+        if (stream is not null && sampleRateHz == SpeechDetector.SampleRate)
+            stream(pcm);
         if (detector is null || sampleRateHz != SpeechDetector.SampleRate)
             return Task.CompletedTask;
         bool finished;

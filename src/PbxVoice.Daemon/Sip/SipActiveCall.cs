@@ -31,6 +31,18 @@ internal sealed class SipActiveCall : IActiveCall
 
     public bool IsUp => !_ended.Task.IsCompleted;
 
+    public Task Ended => _ended.Task;
+
+    public void StartStreaming(Action<byte[]> onCalleeAudio) => _endpoint.StartStreaming(onCalleeAudio);
+
+    public void StopStreaming() => _endpoint.StopStreaming();
+
+    public void EnqueueAudio(ReadOnlySpan<byte> pcm) => _endpoint.EnqueuePcm(pcm);
+
+    public void ClearPlayback() => _endpoint.ClearPlayback();
+
+    public bool PlaybackPending => _endpoint.Pacer.IsPlaying;
+
     private void OnCallEnded(SipClient _) => _ended.TrySetResult();
 
     private void OnDigit(SipClient _, char digit)

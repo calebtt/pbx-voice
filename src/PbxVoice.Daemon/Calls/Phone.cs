@@ -78,6 +78,23 @@ internal interface IActiveCall : IAsyncDisposable
     /// <summary>Waits, returning false if the callee hung up meanwhile.</summary>
     Task<bool> PauseAsync(TimeSpan duration, CancellationToken ct);
 
+    /// <summary>Completes when the call ends, whoever hangs up.</summary>
+    Task Ended { get; }
+
+    /// <summary>Streams the callee's audio (8 kHz 16-bit PCM) to <paramref name="onCalleeAudio"/> until stopped.</summary>
+    void StartStreaming(Action<byte[]> onCalleeAudio);
+
+    void StopStreaming();
+
+    /// <summary>Queues 8 kHz 16-bit PCM for the callee to hear (a voice model's audio).</summary>
+    void EnqueueAudio(ReadOnlySpan<byte> pcm);
+
+    /// <summary>Drops queued audio at once (barge-in).</summary>
+    void ClearPlayback();
+
+    /// <summary>True while queued audio is still playing.</summary>
+    bool PlaybackPending { get; }
+
     Task HangupAsync();
 }
 

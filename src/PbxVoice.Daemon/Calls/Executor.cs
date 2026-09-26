@@ -1,5 +1,6 @@
 using System.Security.Cryptography;
 using PbxVoice.Audio;
+using PbxVoice.Conversation;
 using PbxVoice.Policy;
 using Serilog;
 
@@ -19,13 +20,16 @@ internal sealed class Executor
     private readonly CallStore _calls;
     private readonly ClipStore _clips;
     private readonly ReplyListener _listener;
+    private readonly IVoiceSessionFactory? _sessions;
     private readonly object _lock = new();
     private readonly Dictionary<string, TaskCompletionSource> _done = new();
     private CancellationTokenSource? _currentCts;
     private string? _currentCallId;
 
-    public Executor(TimeProvider time, IPhoneLine phone, PolicyProvider policy, CallStore calls, ClipStore clips, ReplyListener listener)
+    public Executor(TimeProvider time, IPhoneLine phone, PolicyProvider policy, CallStore calls, ClipStore clips, ReplyListener listener,
+        IVoiceSessionFactory? sessions = null)
     {
+        _sessions = sessions;
         _time = time;
         _phone = phone;
         _policy = policy;
@@ -46,7 +50,7 @@ internal sealed class Executor
     }
 
     public CallRecord Create(string? scheduleId, CallType type, Target target, CallOptions options, ClipSet clips,
-        string? text, DateTimeOffset fireTime, IEnumerable<string>? notes = null)
+        string? text, DateTimeOffset fireTime, IEnumerable<string>? notes = null, Brief? brief = null)
     {
         var now = _time.GetUtcNow();
         var record = new CallRecord
@@ -65,6 +69,7 @@ internal sealed class Executor
             FireTime = fireTime,
             Status = CallStatus.Pending,
             NextAttemptAt = fireTime,
+            Conversation = type == CallType.Conversation ? new ConversationRecord { Brief = brief ?? new Brief() } : null,
         };
         if (notes is not null)
             record.Notes.AddRange(notes);
@@ -178,6 +183,12 @@ internal sealed class Executor
         if (_calls.AttemptsBetween(dayStart, dayEnd) >= policy.Limits.CallsPerDay)
         {
             Finish(r, first ? Outcome.Missed : Tally(r), "daily_cap");
+            return;
+        }
+        if (r.Type == CallType.Conversation && r.Conversation is { } conv
+            && _calls.ConversationSecondsBetween(dayStart, dayEnd) / 60 + conv.Brief.MaxMinutes > policy.Limits.ConversationMinutesPerDay)
+        {
+            Finish(r, first ? Outcome.Missed : Tally(r), "daily_cap (conversation minutes)");
             return;
         }
         if (MissingClip(r) is { } missing)
@@ -296,6 +307,9 @@ internal sealed class Executor
             {
                 CallType.Alarm => await AlarmFlow.RunAsync(ctx).ConfigureAwait(false),
                 CallType.Message => await MessageFlow.RunAsync(ctx).ConfigureAwait(false),
+                CallType.Conversation => await ConversationFlow.RunAsync(ctx, new ConversationSettings(
+                    _sessions, _time, policy.Speech.RealtimeModel, policy.Speech.RealtimeReasoning, policy.Speech.Voice,
+                    policy.Speech.Language, policy.DisplayName)).ConfigureAwait(false),
                 _ => throw new NotSupportedException($"{r.Type} calls are not available in this version"),
             };
         }
@@ -318,8 +332,12 @@ internal sealed class Executor
     }
 
     /// <summary>An answered attempt that ended abnormally: an alarm redials; a message does not.</summary>
-    private static AttemptResult InterruptedAnsweredResult(CallType type) =>
-        type == CallType.Alarm ? AttemptResult.NotAcknowledged : AttemptResult.PlayedUnconfirmed;
+    private static AttemptResult InterruptedAnsweredResult(CallType type) => type switch
+    {
+        CallType.Alarm => AttemptResult.NotAcknowledged,
+        CallType.Conversation => AttemptResult.Conversed,
+        _ => AttemptResult.PlayedUnconfirmed,
+    };
 
     /// <summary>The redial and snooze rules (PR-ALARM-3, PR-ALARM-4, PR-MSG-2, PR-MSG-3).</summary>
     private void Decide(CallRecord r, AttemptResult last)
@@ -346,6 +364,16 @@ internal sealed class Executor
                 return;
             case AttemptResult.Snoozed:
                 ScheduleNext(r, TimeSpan.FromMinutes(r.Options.SnoozeMinutes));
+                return;
+            case AttemptResult.Conversed:
+                // Answered: never redialed (PR-CONV-8). The outcome comes from the evidence.
+                var conv = r.Conversation!;
+                if (conv.Outcome is null)
+                {
+                    var (evaluated, why) = Evidence.Evaluate(conv);
+                    _calls.Update(r, _ => { conv.Outcome = evaluated; conv.OutcomeReason = why ?? "interrupted"; });
+                }
+                Finish(r, conv.Outcome!.Value, conv.OutcomeReason);
                 return;
         }
 
@@ -446,6 +474,9 @@ internal sealed class Executor
         {
             // An alarm falls back to the built-in wake tone, so only a message needs its clips.
             CallType.Message => new[] { ("message", c.Message), ("confirm_prompt", r.Options.VoiceAck ? c.ConfirmPrompt : "-"), ("disclosure", r.Self ? "-" : c.Disclosure) },
+            CallType.Conversation => r.Conversation?.Brief.Message is not null
+                ? new[] { ("disclosure", r.Self ? "-" : c.Disclosure), ("message", c.Message), ("confirm_prompt", c.ConfirmPrompt) }
+                : new[] { ("disclosure", r.Self ? "-" : c.Disclosure), ("apology", c.Apology) },
             _ => Array.Empty<(string, string?)>(),
         };
         foreach (var (name, id) in required)

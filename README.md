@@ -71,7 +71,7 @@ A live voice call run by the Grok Voice realtime model, following a brief:
 - `voicemail_left` and `declined` also need the daemon's own check.
 - Other outcomes: `partial`, `degraded_to_message`, `not_answered`, `missed`, `failed`.
 
-If the voice session can't open within 3 s, a brief with a message falls back to a normal message call; a questions-only brief plays a short apology. A conversation redials (2 attempts, 10 minutes apart, 7 s ring) only if nobody answered. It costs xAI voice time (about $0.08 a minute at the time of writing); the policy caps minutes per call and per day.
+If the voice session can't open within 3 s, a brief with a message falls back to a normal message call; a questions-only brief plays a short apology. A conversation redials (2 attempts, 10 minutes apart, 30 s ring) only if nobody answered. It costs xAI voice time (about $0.08 a minute at the time of writing); the policy caps minutes per call and per day.
 
 **The conversation prompt is a text file.**
 - The default is built in. `pbx-voice prompt` prints it.

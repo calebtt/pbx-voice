@@ -36,7 +36,9 @@ pbx-voice places real phone calls from the user's own phone extension. When you 
 ## Calls at a set time
 
 Use your routines. You can add, change, pause, and delete them from chat.
-- **Create a routine for the time the user gave.** Routines use the time zone in your settings; if the user gave another zone, convert the time and say what you did. A weekday wake-up call is a Weekdays routine. For a one-off call, use a schedule that fires at that time and delete the routine after its first run.
+- **Create a routine for the time the user gave.** Routines use the time zone in your settings; if the user gave another zone, convert the time and say what you did. A weekday wake-up call is a Weekdays routine.
+- **For a one-off call, create a daily routine that checks the date.** Its instruction first compares today's date with the call's date. On any other date it does nothing. On the call's date it places the call, then deletes the routine. If the delete fails, the date check still keeps the call from repeating.
+- **Routines can start several minutes late.** When a call has to ring by a certain time, tell the user and ask how much earlier to schedule the routine. Don't choose an offset yourself.
 - **Make the routine's instruction the whole call,** with the exact arguments, for example:
   > Place a pbx-voice call with `call_now`: `{"type": "alarm", "to": "me"}`. Then call `wait_for_call` with its call_id until the outcome is final, calling it again while it's `in_progress`. Tell the user the outcome exactly as recorded.
 - **Tell the user, once, to allow the pbx-voice tools without approval** (Auto-review: Always allow). An approval that a routine asks for expires after about 10 minutes, so an alarm waiting for one never rings.
@@ -45,8 +47,10 @@ Use your routines. You can add, change, pause, and delete them from chat.
 
 ## Call types
 
-- **`alarm`** (to `self` only): redials until the user says "I'm up". Options: `ack` (`voice` or `none`), `redial`, `max_attempts`, `retry_minutes`, `ring_seconds`, `snooze_minutes`, `max_snoozes`. An alarm that redials can take about 20 minutes. Outcomes: `awake`, `played` (ack none), `not_acknowledged`, `not_answered`, `missed`, `failed`.
-- **`message`**: speaks `text` word for word and asks for "got it". It never redials after the message has played. Outcomes: `confirmed`, `played`, `played_unconfirmed`, `not_answered`, `missed`, `failed`.
+Each type's defaults are in parentheses. Set an option only when the user asks for something different. `ring_seconds` is counted from when the phone starts ringing.
+
+- **`alarm`** (to `self` only): redials until the user says "I'm up". Options: `ack` (`voice`; or `none`), `redial` (true), `max_attempts` (5), `retry_minutes` (3), `ring_seconds` (45), `snooze_minutes` (10), `max_snoozes` (3). An alarm that redials can take about 20 minutes. Outcomes: `awake`, `played` (ack none), `not_acknowledged`, `not_answered`, `missed`, `failed`.
+- **`message`**: speaks `text` word for word and asks for "got it". It never redials after the message has played. Options: `ack` (`voice`; or `none`), `redial` (true), `max_attempts` (2), `retry_minutes` (10), `ring_seconds` (30). Outcomes: `confirmed`, `played`, `played_unconfirmed`, `not_answered`, `missed`, `failed`.
 - **`conversation`**: a live AI voice call following `brief`:
   - `goal`: one sentence.
   - `message`: spoken verbatim first.
@@ -54,7 +58,7 @@ Use your routines. You can add, change, pause, and delete them from chat.
   - `ask`: questions, as `{name, question, required, hint}`.
   - `max_minutes`: the hard limit.
 
-  Outcomes: `completed` (every required answer backed by the callee's words), `partial`, `declined`, `voicemail_left`, `degraded_to_message`, `not_answered`, `missed`, `failed`. It costs voice-API time; keep `max_minutes` small.
+  It redials only when nobody answered. Options: `redial` (true), `max_attempts` (2), `retry_minutes` (10), `ring_seconds` (30). Outcomes: `completed` (every required answer backed by the callee's words), `partial`, `declined`, `voicemail_left`, `degraded_to_message`, `not_answered`, `missed`, `failed`. It costs voice-API time; keep `max_minutes` small.
 
 `missed` means the daemon couldn't start the call in time: within 15 minutes of `call_now` for an alarm, or 5 for the other types (for example because another call was still going). It was never dialed.
 

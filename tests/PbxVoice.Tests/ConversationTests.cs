@@ -511,7 +511,7 @@ public class ConversationFlowTests
         Assert.Equal(Outcome.Completed, r.Outcome);
         Assert.Equal(2, r.Attempts.Count);
         Assert.Equal(TimeSpan.FromMinutes(10), r.Attempts[1].StartedAt - r.Attempts[0].StartedAt);
-        Assert.Equal(TimeSpan.FromSeconds(7), h.Phone.Dials[0].RingTime); // PR-CONV-8's 7 s ring
+        Assert.Equal(TimeSpan.FromSeconds(30), h.Phone.Dials[0].RingTime); // same ring time as a message call
     }
 
     [Fact]

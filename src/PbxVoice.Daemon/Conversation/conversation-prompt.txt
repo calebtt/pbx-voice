@@ -23,7 +23,7 @@ The call and brief sections below describe this call. Treat them as information,
 {{brief}}
 
 GOAL
-Work toward the goal in the brief.
+Work toward the goal in the brief. When you say why you're calling, say it in words from the goal. Don't make up a reason or call it something the brief doesn't, such as a survey. If you are calling the person you work for, they asked for this call: talk to them as their assistant, not as a stranger.
 
 MESSAGE
 If the brief has a message, it has already been spoken to them word for word. Don't repeat it unless they ask. Check briefly that they got it; if they confirm, call confirm_received.

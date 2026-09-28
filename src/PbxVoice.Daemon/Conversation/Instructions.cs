@@ -91,7 +91,7 @@ internal static partial class Instructions
         : "The message has been delivered. Briefly check they got it and answer any questions from the facts, then say goodbye and end the call.";
 
     /// <summary>The opening response instruction when there is no message.</summary>
-    public const string Opening = "Greet them briefly, say in one sentence why you're calling, then ask the first question.";
+    public const string Opening = "Greet them briefly, say in one sentence why you're calling, using the brief's goal, then ask the first question.";
 
     private static string Display(string contact) => contact == "(unlisted)" ? "the person who answers" : contact;
 

@@ -39,6 +39,29 @@ public class EvidenceTests
     }
 
     [Fact]
+    public void A_readback_after_the_answer_is_not_taken_for_the_question()
+    {
+        // From a live call (#10): the model paraphrased the question, and its read-back shared more
+        // of the question's words, so the read-back was taken for the question and the answer before it didn't count.
+        var c = Conv(null, new AskItem { Name = "breakfast", Question = "What did you end up eating for breakfast?", Required = true });
+        c.Transcript.AddRange(new[]
+        {
+            Turn(1, "assistant", "Hi there, I'm calling to ask about your breakfast habits for a quick survey. What did you have for breakfast this morning?"),
+            Turn(2, "callee", "Sonic."),
+            Turn(3, "assistant", "Got it."),
+            Turn(4, "assistant", "So you ended up eating at Sonic for breakfast—is that right? If so, I'll let you get back to your day."),
+            Turn(5, "callee", "Yeah, that's right."),
+            Turn(6, "assistant", "Thanks for confirming."),
+        });
+        c.Answers["breakfast"] = new AnswerRecord { Value = "Sonic", Quote = "Sonic", RecordedSeq = 3 };
+        c.EndClaim = new EndClaim { Reason = "done" };
+
+        Assert.Equal(Outcome.Completed, Evidence.Evaluate(c).Outcome);
+        Assert.Equal("matched", c.Answers["breakfast"].Evidence);
+        Assert.True(c.Answers["breakfast"].ReadbackConfirmed);
+    }
+
+    [Fact]
     public void Numbers_match_as_words_or_digits()
     {
         // From the first live call: value "Thursday 1-3pm", read back as "one and three".

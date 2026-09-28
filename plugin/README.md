@@ -1,8 +1,30 @@
-# pbx-voice for Grok
+# pbx-voice plugin
 
-This folder gives Grok the pbx-voice MCP tools and a skill that explains how to use them (`skills/pbx-voice/SKILL.md`). The calls are placed by the pbx-voice daemon on the same computer. The MCP server, `pbx-voice mcp-stdio`, starts the daemon when a tool call finds it isn't running, so nothing has to keep it running between calls.
+This folder gives an agent the pbx-voice MCP tools and a skill that explains how to use them (`skills/pbx-voice/SKILL.md`). The calls are placed by the pbx-voice daemon on the same computer. The MCP server, `pbx-voice mcp-stdio`, starts the daemon when a tool call finds it isn't running, so nothing has to keep it running between calls.
 
 pbx-voice has no scheduler. For a call at a set time, the agent creates a routine that places the call then; the skill explains how.
+
+The plugin has a manifest for Grok (`.grok-plugin/plugin.json`) and one for Cursor (`.cursor-plugin/plugin.json`). Both use the same `.mcp.json` and skill.
+
+## What you need
+
+pbx-voice is bring-your-own-PBX. It includes no phone service. You need:
+
+- **A SIP extension on a PBX you run or have an account on,** private or hosted, with its server, username, and password. A dedicated extension is best.
+- **An xAI API key** for text-to-speech, speech-to-text, and the voice model that runs conversation calls. Use a key only for pbx-voice, with prepaid credit or a spending limit.
+- **The `pbx-voice` binary** from a [release](https://github.com/calebtt/pbx-voice/releases) (glibc-based Linux, x64 or arm64).
+
+## Network and credentials
+
+- **Outbound:**
+  - your PBX (SIP and RTP over UDP)
+  - public STUN servers, to learn the public address behind NAT: `stun.l.google.com`, `stun1.l.google.com`, and `stun2.l.google.com` on port 19302, and `stun.stunprotocol.org` on port 3478
+  - `api.x.ai`, over HTTPS for speech and over a WebSocket for the conversation voice model
+- **Listening:**
+  - MCP over HTTP on `127.0.0.1:8765` by default, with a bearer token required (`PBX_VOICE_MCP_LISTEN` changes the address, and `off` turns it off)
+  - a control socket in the state directory
+  - local UDP ports for SIP and RTP
+- **Credentials:** `SIP_SERVER`, `SIP_USERNAME`, `SIP_PASSWORD`, and `XAI_API_KEY`. They go in `secrets.env` in the state directory (mode 0600) or in the environment. Tool arguments never carry them. pbx-voice sends no telemetry.
 
 ## Install on Grok Bot
 

@@ -1,0 +1,16 @@
+{
+  "name": "pbx-voice",
+  "owner": {
+    "name": "Caleb Taylor"
+  },
+  "metadata": {
+    "description": "Phone calls for agents through your own PBX"
+  },
+  "plugins": [
+    {
+      "name": "pbx-voice",
+      "source": "plugin",
+      "description": "Phone calls for agents through your own PBX. Bring the SIP credentials for an extension on a private or hosted PBX, and pbx-voice places wake-up alarms, spoken messages, and short AI conversations that bring back answers. Requires the pbx-voice binary and an xAI API key."
+    }
+  ]
+}

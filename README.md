@@ -220,7 +220,7 @@ Unit tests use a fake clock and a scripted phone, so they cover policy days and 
 
 ## Grok plugin
 
-[`plugin/`](plugin/) holds the MCP connection and the agent skill. On the Grok CLI, this repository is also its marketplace (`grok plugin marketplace add calebtt/pbx-voice`). Grok Bot doesn't install plugins from a repository; [`plugin/README.md`](plugin/README.md) gives the steps for both.
+[`plugin/`](plugin/) holds the MCP connection and the agent skill. On the Grok CLI, this repository is also its marketplace (`grok plugin marketplace add calebtt/pbx-voice`). Grok Bot doesn't install plugins from a repository; [`plugin/README.md`](plugin/README.md) gives the steps for both. The plugin also has a Cursor manifest, and `.cursor-plugin/marketplace.json` makes this repository a Cursor marketplace. pbx-voice isn't listed in the xAI or Cursor marketplace catalogs yet.
 
 Releases (tags `v*`) publish self-contained builds for linux-x64 and linux-arm64 with the example configuration files, the systemd unit, and `SKILL.md`, plus `SHA256SUMS` and build-provenance attestations.
 

@@ -81,13 +81,15 @@ internal static class Evidence
     /// <summary>
     /// When the question was asked: the first assistant turn that contains at least half of the
     /// question's content words. If the model paraphrased beyond that, the first assistant turn
-    /// after the message (or the first assistant turn) stands in.
+    /// after the message (or the first assistant turn) stands in. Only turns that existed when the
+    /// answer was recorded (<paramref name="recordedSeq"/>, 0 for unknown) count, so a later
+    /// read-back, which repeats the question's words, can't be taken for the question.
     /// </summary>
-    public static int QuestionSeq(AskItem ask, IReadOnlyList<TurnRecord> transcript)
+    public static int QuestionSeq(AskItem ask, IReadOnlyList<TurnRecord> transcript, int recordedSeq = 0)
     {
         var content = Words(ask.Question).Where(w => !StopWords.Contains(w)).Distinct().ToList();
         var assistant = transcript.Where(t => t.Role == "assistant" && !t.Scripted).OrderBy(t => t.Seq).ToList();
-        foreach (var turn in assistant)
+        foreach (var turn in assistant.Where(t => recordedSeq <= 0 || t.Seq <= recordedSeq))
         {
             var words = Words(turn.Text).ToHashSet();
             if (content.Count > 0 && content.Count(words.Contains) * 2 >= content.Count)
@@ -105,7 +107,7 @@ internal static class Evidence
     /// <summary>Checks one recorded answer against the callee's turns after its question.</summary>
     public static string Match(AskItem ask, AnswerRecord answer, IReadOnlyList<TurnRecord> transcript)
     {
-        int askedAt = QuestionSeq(ask, transcript);
+        int askedAt = QuestionSeq(ask, transcript, answer.RecordedSeq);
         return transcript.Any(t => t.Role == "callee" && t.Seq > askedAt && QuoteFound(answer.Quote, t)) ? "matched" : "unmatched";
     }
 

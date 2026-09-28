@@ -51,7 +51,8 @@ internal sealed class CallOptions
     {
         CallType.Alarm => new() { Ack = "voice", Redial = true, MaxAttempts = 5, RetryMinutes = 3, RingSeconds = 45, SnoozeMinutes = 10, MaxSnoozes = 3 },
         CallType.Message => new() { Ack = "voice", Redial = true, MaxAttempts = 2, RetryMinutes = 10, RingSeconds = 30 },
-        _ => new() { Ack = "voice", Redial = true, MaxAttempts = 2, RetryMinutes = 10, RingSeconds = 7 },
+        CallType.Conversation => new() { Ack = "voice", Redial = true, MaxAttempts = 2, RetryMinutes = 10, RingSeconds = 30 },
+        _ => throw new ArgumentOutOfRangeException(nameof(type), type, null),
     };
 
     /// <summary>

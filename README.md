@@ -101,7 +101,7 @@ You need a SIP extension on your PBX (a dedicated one is best) and a host that c
 **From a release:** each release has a self-contained build for linux-x64 and linux-arm64 (no .NET needed), with the example configuration files, the systemd unit, and the agent skill (`SKILL.md`).
 
 ```bash
-v=0.1.0
+v=0.1.1
 curl -LO https://github.com/calebtt/pbx-voice/releases/download/v$v/pbx-voice-$v-linux-x64.tar.gz
 curl -LO https://github.com/calebtt/pbx-voice/releases/download/v$v/SHA256SUMS
 sha256sum --check --ignore-missing SHA256SUMS

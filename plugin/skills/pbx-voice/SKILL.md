@@ -4,7 +4,7 @@ description: Place real phone calls through the user's own phone extension with 
 when-to-use: "call me at", "wake me up", "wake-up call", "phone Mom and tell her", "call the landlord and ask", "find out when", "leave a voicemail", "did the call go through", "cancel my wake-up call"
 compatibility: Requires the pbx-voice binary and its policy on this computer, and its MCP server (`pbx-voice mcp-stdio`) configured (see the plugin README). The MCP server starts the pbx-voice daemon when it isn't running.
 metadata:
-  short-description: Phone calls over your own SIP extension
+  short-description: Phone calls for agents through your own PBX
 ---
 
 # pbx-voice: phone calls for the user

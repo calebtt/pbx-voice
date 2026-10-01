@@ -98,7 +98,7 @@ The daemon still enforces the policy (contacts, quiet hours, caps) on every call
 
 You need a SIP extension on your PBX (a dedicated one is best) and a host that can run ONNX Runtime: glibc-based Linux on x64 or arm64 (Alpine and other musl systems are not supported).
 
-**From a release:** each release has a self-contained build for linux-x64 and linux-arm64 (no .NET needed), with the example configuration files, the systemd unit, and the agent skill (`SKILL.md`).
+**From a release:** each release has a self-contained build for linux-x64 and linux-arm64 (no .NET needed), with the example configuration files, the systemd unit, the agent skill (`SKILL.md`), and `security.md`.
 
 ```bash
 v=0.1.2
@@ -109,7 +109,7 @@ tar -xzf pbx-voice-$v-linux-x64.tar.gz
 ./pbx-voice-$v-linux-x64/pbx-voice selftest
 ```
 
-Each tarball also has a signed build-provenance attestation; [docs/security.md](docs/security.md) shows how to check it.
+Each tarball also has a signed build-provenance attestation; [docs/security.md](docs/security.md) (`security.md` at the root of a release tarball) shows how to check it.
 
 **From source,** with the .NET 8 SDK:
 
@@ -151,7 +151,7 @@ Tools: `call_now`, `wait_for_call`, `cancel_call`, `list_calls`, `get_call`, `li
 - Any result that carries the callee's words includes an `untrusted_callee_speech` notice.
 
 **When the agent runs on the same computer** (Grok Bot, or the Grok CLI), connect through the stdio shim, `pbx-voice mcp-stdio`. It forwards to the daemon's control socket, and it starts the daemon if a tool call finds it isn't running (`PBX_VOICE_AUTOSTART=0` turns that off). It needs no token, and it works for the same user only.
-- **Grok Bot:** see [plugin/README.md](plugin/README.md#install-on-grok-bot).
+- **Grok Bot:** see [plugin/README.md](https://github.com/calebtt/pbx-voice/blob/main/plugin/README.md#install-on-grok-bot).
 - **Grok CLI** (`~/.grok/config.toml`), or install the plugin (`plugin/`), which configures this for you:
   ```toml
   [mcp_servers.pbx-voice]
@@ -205,7 +205,7 @@ A cell voicemail often answers before the ring time is up. With `ack: voice`, vo
 - Every callee must be in `policy.json` (unless `allow_unlisted_numbers` is on). Alarms only call `self`. Quiet hours block calls to anyone else. Daily caps apply. All of this is checked when a call is requested and again before it dials.
 - If you administer the PBX, restrict the extension's outbound routes and allow one concurrent call. Where that's possible, it's the strongest control against toll fraud, because it sits outside this host.
 - Calls to contacts that are not `self` start with a disclosure clip. AI-generated voices and call transcription are regulated in many places (in the US, the FCC treats AI voices as "artificial voice" under the TCPA, and some states require all-party consent to record). This is not legal advice; check before calling anyone outside your household.
-- If the daemon runs on the same machine and user account as the agent (Grok Bot, for example), the agent can read `secrets.env` and edit the policy; the policy then guides the agent but can't bind it. Use an xAI key only for pbx-voice, with prepaid credit or a spending limit. [docs/security.md](docs/security.md) covers what holds on that setup, prompt injection, and how to verify releases.
+- If the daemon runs on the same machine and user account as the agent (Grok Bot, for example), the agent can read `secrets.env` and edit the policy; the policy then guides the agent but can't bind it. Use an xAI key only for pbx-voice, with prepaid credit or a spending limit. [docs/security.md](docs/security.md) (`security.md` in a release tarball) covers what holds on that setup, prompt injection, and how to verify releases.
 
 Network endpoints used: your PBX (SIP and RTP over UDP), public STUN servers (to learn the public address behind NAT), and `api.x.ai`.
 
@@ -220,9 +220,9 @@ Unit tests use a fake clock and a scripted phone, so they cover policy days and 
 
 ## Grok plugin
 
-[`plugin/`](plugin/) holds the MCP connection and the agent skill. On the Grok CLI, this repository is also its marketplace (`grok plugin marketplace add calebtt/pbx-voice`). Grok Bot doesn't install plugins from a repository; [`plugin/README.md`](plugin/README.md) gives the steps for both. The plugin also has a Cursor manifest, and `.cursor-plugin/marketplace.json` makes this repository a Cursor marketplace. pbx-voice isn't listed in the xAI or Cursor marketplace catalogs yet.
+[`plugin/`](https://github.com/calebtt/pbx-voice/tree/main/plugin) holds the MCP connection and the agent skill. On the Grok CLI, this repository is also its marketplace (`grok plugin marketplace add calebtt/pbx-voice`). Grok Bot doesn't install plugins from a repository; [`plugin/README.md`](https://github.com/calebtt/pbx-voice/blob/main/plugin/README.md) gives the steps for both. The plugin also has a Cursor manifest, and `.cursor-plugin/marketplace.json` makes this repository a Cursor marketplace. pbx-voice isn't listed in the xAI or Cursor marketplace catalogs yet.
 
-Releases (tags `v*`) publish self-contained builds for linux-x64 and linux-arm64 with the example configuration files, the systemd unit, and `SKILL.md`, plus `SHA256SUMS` and build-provenance attestations.
+Releases (tags `v*`) publish self-contained builds for linux-x64 and linux-arm64 with the example configuration files, the systemd unit, `SKILL.md`, and `security.md`, plus `SHA256SUMS` and build-provenance attestations.
 
 ## License
 

@@ -19,6 +19,14 @@ jobs:
       - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4.3.1
         with:
           dotnet-version: 8.0.x
+      - name: Check the tag matches the project version
+        run: |
+          # The binary's version comes from the tag; the plugin manifests carry the project version (PluginManifestTests).
+          project=$(sed -n 's:.*<Version>\(.*\)</Version>.*:\1:p' src/PbxVoice.Daemon/PbxVoice.Daemon.csproj)
+          if [ "${GITHUB_REF_NAME#v}" != "$project" ]; then
+            echo "::error::Tag $GITHUB_REF_NAME doesn't match the project version $project"
+            exit 1
+          fi
       - name: Test
         run: dotnet test PbxVoice.sln -c Release
       - name: Build self-contained binaries

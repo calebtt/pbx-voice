@@ -33,11 +33,18 @@ public class PluginManifestTests
         Assert.Equal(Grok.GetProperty("description").GetString(), entry.GetProperty("description").GetString());
     }
 
+    private static string DaemonVersion() =>
+        Regex.Match(File.ReadAllText(PolicyTests.RepoFile("src/PbxVoice.Daemon/PbxVoice.Daemon.csproj")), "<Version>(.+?)</Version>").Groups[1].Value;
+
     [Fact]
-    public void The_manifest_version_is_the_daemon_version()
+    public void The_manifest_version_is_the_daemon_version() =>
+        Assert.Equal(DaemonVersion(), Grok.GetProperty("version").GetString());
+
+    [Fact]
+    public void The_README_release_example_uses_the_daemon_version()
     {
-        string csproj = File.ReadAllText(PolicyTests.RepoFile("src/PbxVoice.Daemon/PbxVoice.Daemon.csproj"));
-        Assert.Equal(Regex.Match(csproj, "<Version>(.+?)</Version>").Groups[1].Value, Grok.GetProperty("version").GetString());
+        string readme = File.ReadAllText(PolicyTests.RepoFile("README.md"));
+        Assert.Equal(DaemonVersion(), Regex.Match(readme, @"(?m)^v=(\S+)$").Groups[1].Value);
     }
 
     [Fact]

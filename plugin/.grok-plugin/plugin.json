@@ -1,7 +1,7 @@
 {
   "name": "pbx-voice",
   "version": "0.1.1",
-  "description": "Phone calls for agents through your own PBX. Bring the SIP credentials for an extension on a private or hosted PBX, and pbx-voice places wake-up alarms, spoken messages, and short AI conversations that bring back answers. Requires the pbx-voice binary and an xAI API key.",
+  "description": "Phone calls for agents through your own PBX. Bring the SIP credentials for an extension on a private or hosted PBX, and pbx-voice places wake-up alarms, spoken messages, and short AI conversations that bring back answers. Requires the pbx-voice binary (Linux, x64 or arm64) and an xAI API key.",
   "author": {
     "name": "Caleb Taylor"
   },

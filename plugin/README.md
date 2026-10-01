@@ -59,7 +59,8 @@ On Grok Bot:
 2. Add this repository as a marketplace and install the plugin:
    ```bash
    grok plugin marketplace add calebtt/pbx-voice
-   grok plugin install pbx-voice
+   grok plugin install pbx-voice --trust
    ```
+   The install needs `--trust` because the plugin runs an MCP server (`pbx-voice mcp-stdio`) on your computer.
 
 `.mcp.json` runs `pbx-voice mcp-stdio` from your `PATH`. For a daemon on another host, connect over HTTP instead (main README, "Connecting an agent").

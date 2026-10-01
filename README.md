@@ -126,8 +126,8 @@ A single-file build (the releases are one) unpacks its native libraries, ONNX Ru
 
 The state directory is `SIPBOT_STATE_DIR`, else `$XDG_STATE_HOME/pbx-voice`, else `~/.local/state/pbx-voice`. The daemon creates it with mode 0700 and writes every file 0600. Put two files in it:
 
-- **`policy.json`**: copy [`docs/policy.example.json`](docs/policy.example.json) and edit it. It holds the contacts, quiet hours, daily caps, phrase lists, and dialing settings. No MCP tool can change it, and `list_contacts` shows agents only masked numbers (an agent with a shell on the same account can still edit the file; see Safety). Edits apply without a restart.
-- **`secrets.env`** (or the same variables in the environment, which win): see [`docs/secrets.env.example`](docs/secrets.env.example). `SIP_SERVER`, `SIP_USERNAME`, `SIP_PASSWORD`, optionally `SIP_PORT`, `SIP_FROMNAME`, `SIP_LOCAL_PORT`, and `XAI_API_KEY`. Without an xAI key, alarms still work (wake tone, speech detection), but messages and conversations are refused.
+- **`policy.json`**: copy `policy.example.json` to it and edit it. The example is at the root of a release tarball, and at [`docs/policy.example.json`](docs/policy.example.json) in the source. It holds the contacts, quiet hours, daily caps, phrase lists, and dialing settings. No MCP tool can change it, and `list_contacts` shows agents only masked numbers (an agent with a shell on the same account can still edit the file; see Safety). Edits apply without a restart.
+- **`secrets.env`** (or the same variables in the environment, which win): start from `secrets.env.example` (at the root of a release tarball, or [`docs/secrets.env.example`](docs/secrets.env.example) in the source). `SIP_SERVER`, `SIP_USERNAME`, `SIP_PASSWORD`, optionally `SIP_PORT`, `SIP_FROMNAME`, `SIP_LOCAL_PORT`, and `XAI_API_KEY`. Without an xAI key, alarms still work (wake tone, speech detection), but messages and conversations are refused.
 
 Run it:
 
@@ -137,7 +137,7 @@ Run it:
 ./dist/pbx-voice stop                     # refused during a call unless --force
 ```
 
-or as a systemd user service with [`docs/pbx-voice.service`](docs/pbx-voice.service).
+or as a systemd user service with `pbx-voice.service` (at the root of a release tarball, or [`docs/pbx-voice.service`](docs/pbx-voice.service) in the source).
 - **Without a service manager** (Grok Bot's computer has none): connect the agent through the stdio shim (below). It starts the daemon when a tool call finds it isn't running, so nothing needs to keep it running between calls.
 - **Detached:** a daemon started by `start` or the shim runs in its own session and isn't the shim's child, so it outlives the agent session that started it.
 - **One daemon per extension.** A second start finds the running one and uses it.

@@ -36,7 +36,7 @@ internal sealed class DaemonHost
         paths.EnsureCreated();
         if (!File.Exists(paths.Policy))
         {
-            Log.Error("No policy file at {Path}. Copy policy.example.json (in the release tarball, or docs/ in the source) there and edit it.", paths.Policy);
+            Log.Error("No policy file at {Path}. Copy policy.example.json (at the root of the release tarball, or in docs/ in the source) to that path and edit it.", paths.Policy);
             return 2;
         }
 

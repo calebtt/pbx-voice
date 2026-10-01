@@ -1,5 +1,5 @@
-# systemd user unit. Install:
-#   mkdir -p ~/.config/systemd/user && cp docs/pbx-voice.service ~/.config/systemd/user/
+# systemd user unit. Install (this file is at the root of a release tarball, and in docs/ in the source):
+#   mkdir -p ~/.config/systemd/user && cp pbx-voice.service ~/.config/systemd/user/
 #   systemctl --user daemon-reload && systemctl --user enable --now pbx-voice
 #   loginctl enable-linger "$USER"    # keep it running while you are logged out
 # Logs: journalctl --user -u pbx-voice -f

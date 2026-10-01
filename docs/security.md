@@ -95,4 +95,4 @@ Unexpected code execution (ASI05) doesn't apply: nothing in pbx-voice runs code 
 
 ## Reporting a vulnerability
 
-See [SECURITY.md](../SECURITY.md).
+See [SECURITY.md](https://github.com/calebtt/pbx-voice/blob/main/SECURITY.md).

@@ -198,4 +198,56 @@ public class ExecutorTests
         Assert.Equal(AttemptResult.SipFailure, recovered.Attempts[0].Result);
         Assert.NotNull(recovered.NextAttemptAt);
     }
+
+    // ---- #28: rendered clips follow the records' retention -------------------------------
+
+    [Fact]
+    public async Task Retention_deletes_a_pruned_messages_clip_and_keeps_clips_still_in_use()
+    {
+        using var h = new Harness();
+        h.Phone.Answer(new FakeCall(new[] { Replies.Speech(600) }));
+        h.Stt.Says("got it");
+        var old = await h.CallNow(new { type = "message", to = "me", text = "The old message." });
+        await h.RunToEnd(old);
+        var oldMessage = h.Record(old).Clips.Message!;
+
+        // A month and a day later, another message: it shares the fixed prompts and is still open.
+        h.Time.Advance(TimeSpan.FromDays(31));
+        foreach (var file in Directory.EnumerateFiles(h.Paths.Clips))
+            File.SetLastWriteTimeUtc(file, h.Time.GetUtcNow().UtcDateTime - TimeSpan.FromDays(31));
+        var recent = await h.CallNow(new { type = "message", to = "me", text = "The new message." });
+        var recentClips = h.Record(recent).Clips;
+        // An orphan from long ago that no record uses, and a fresh one (being rendered for a request).
+        var orphan = Path.Combine(h.Paths.Clips, new string('a', 64) + ".wav");
+        var fresh = Path.Combine(h.Paths.Clips, new string('b', 64) + ".wav");
+        File.WriteAllBytes(orphan, new byte[100]);
+        File.WriteAllBytes(fresh, new byte[100]);
+        File.SetLastWriteTimeUtc(orphan, h.Time.GetUtcNow().UtcDateTime - TimeSpan.FromDays(40));
+        File.SetLastWriteTimeUtc(fresh, h.Time.GetUtcNow().UtcDateTime);
+
+        var (records, clips) = Retention.Run(h.Calls, h.Clips, h.Time.GetUtcNow() - TimeSpan.FromDays(30));
+
+        Assert.Equal(1, records);
+        Assert.Null(h.Calls.Snapshot(old));
+        Assert.Equal(2, clips); // the old message and the orphan
+        Assert.Null(h.Clips.Load(oldMessage));
+        Assert.False(File.Exists(orphan));
+        Assert.True(File.Exists(fresh));
+        Assert.NotNull(h.Clips.Load(recentClips.Message!));
+        Assert.NotNull(h.Clips.Load(recentClips.ConfirmPrompt!)); // shared with the pruned call, still used
+    }
+
+    [Fact]
+    public async Task A_reused_clip_is_marked_fresh_so_retention_keeps_it()
+    {
+        using var h = new Harness();
+        var first = await h.CallNow(new { type = "message", to = "me", text = "Same words." });
+        var path = Path.Combine(h.Paths.Clips, h.Record(first).Clips.Message + ".wav");
+        File.SetLastWriteTimeUtc(path, DateTime.UtcNow - TimeSpan.FromDays(90));
+
+        await h.CallNow(new { type = "message", to = "me", text = "Same words." }); // cache hit
+
+        Assert.True(File.GetLastWriteTimeUtc(path) > DateTime.UtcNow - TimeSpan.FromMinutes(5));
+    }
 }
+

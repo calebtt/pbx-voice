@@ -1,5 +1,4 @@
 using System.Globalization;
-using System.Security.Cryptography;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using PbxVoice.Audio;
@@ -140,7 +139,6 @@ internal sealed partial class PbxVoiceService
             throw new ServiceError($"this conversation could exceed today's conversation minutes ({policy.Limits.ConversationMinutesPerDay})");
     }
 
-    /// <summary>
     // ---- clip rendering ----------------------------------------------------------------------
 
     internal const string DefaultAlarmPrompt = "Good morning, it's {time}. Say 'I'm up' when you're awake.";
@@ -393,7 +391,4 @@ internal sealed partial class PbxVoiceService
 
     private static string? Str(JsonElement e, string name) =>
         e.ValueKind == JsonValueKind.Object && e.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.String ? v.GetString() : null;
-
-    private static string NewId(string prefix, DateTimeOffset now) =>
-        $"{prefix}_{now.UtcDateTime:yyyyMMddHHmmss}_{Convert.ToHexString(RandomNumberGenerator.GetBytes(3)).ToLowerInvariant()}";
 }

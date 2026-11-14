@@ -188,7 +188,7 @@ pbx-voice ctl get_call '{"call_id":"c_..."}'
 pbx-voice ctl cancel_call '{"call_id":"c_..."}'
 ```
 
-Call records (`calls/*.json`) keep each attempt: when ringing started, the SIP result, the replies with their transcripts and how each was recognized, and the outcome. Records are deleted after 30 days (`retention_days`). No audio is kept.
+Call records (`calls/*.json`) keep each attempt: when ringing started, the SIP result, the replies with their transcripts and how each was recognized, and the outcome. Records are deleted after 30 days (`retention_days`). The callee's audio is never stored. The daemon's own rendered speech is kept in `clips/` (one WAV per distinct text, so a message's words are in its clip) and deleted on the same schedule: a clip unused for `retention_days` that no remaining record refers to is removed, and a fixed prompt needed again is rendered again.
 
 ## Wake-up calls: phone setup
 

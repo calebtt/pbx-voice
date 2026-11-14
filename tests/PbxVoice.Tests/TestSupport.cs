@@ -76,6 +76,12 @@ internal sealed class FakeCall : IActiveCall
         _ended.TrySetResult();
     }
 
+    /// <summary>Runs as play N (1-based) starts, e.g. to cancel the call during it.</summary>
+    public Action<int>? OnPlay { get; set; }
+
+    /// <summary>Runs as capture N (1-based) starts.</summary>
+    public Action<int>? OnCapture { get; set; }
+
     public Task<PlayResult> PlayAsync(Clip clip, CancellationToken ct)
     {
         if (!IsUp)
@@ -83,6 +89,9 @@ internal sealed class FakeCall : IActiveCall
         if (ct.IsCancellationRequested)
             return Task.FromResult(new PlayResult(PlayEnd.Cancelled, TimeSpan.Zero));
         Played.Add(clip.Id);
+        OnPlay?.Invoke(Played.Count);
+        if (ct.IsCancellationRequested)
+            return Task.FromResult(new PlayResult(PlayEnd.Cancelled, TimeSpan.FromMilliseconds(200)));
         if (_hangUpDuringPlay == Played.Count)
         {
             Down();
@@ -94,6 +103,9 @@ internal sealed class FakeCall : IActiveCall
     public Task<Capture> CaptureAsync(DetectorSettings settings, CancellationToken ct)
     {
         Captures++;
+        OnCapture?.Invoke(Captures);
+        if (ct.IsCancellationRequested)
+            return Task.FromResult(new Capture(CaptureEnd.Cancelled, false, TimeSpan.Zero, Array.Empty<byte>()));
         if (!IsUp)
             return Task.FromResult(Replies.HungUp());
         var capture = _captures.Count > 0 ? _captures.Dequeue() : Replies.Silence();
@@ -151,11 +163,20 @@ internal sealed class FakePhone : IPhoneLine
             Registration = after;
     }
 
-    public Task<bool> WaitForRegistrationAsync(TimeSpan max, CancellationToken ct)
+    /// <summary>When set, every registration wait blocks until this completes (it ignores cancellation).</summary>
+    public Task? HoldRegistrationWait { get; set; }
+
+    /// <summary>Set when a registration wait has started.</summary>
+    public TaskCompletionSource RegistrationWaitStarted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    public async Task<bool> WaitForRegistrationAsync(TimeSpan max, CancellationToken ct)
     {
+        RegistrationWaitStarted.TrySetResult();
+        if (HoldRegistrationWait is { } hold)
+            await hold;
         if (!Registration.Registered && RegistersWhileWaiting && !Registration.HardFailure)
             Registration = new RegistrationInfo("Registered", true, null, null);
-        return Task.FromResult(Registration.Registered);
+        return Registration.Registered;
     }
 
     public Task<DialResult> DialAsync(DialRequest request, CancellationToken ct)

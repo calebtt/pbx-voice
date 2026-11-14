@@ -137,6 +137,8 @@ Run it:
 ./dist/pbx-voice stop                     # refused during a call unless --force
 ```
 
+A stopped daemon places nothing. When it starts again, a call that was never dialed and is more than its grace window late (15 minutes for an alarm, 5 for the other types) ends as `missed`. A call that was between attempts is finished, not dialed, once its redial or snooze call-back is more than the same grace window late; its record keeps the outcome of the attempts so far, with the reason `redial_window_passed` or `snooze_window_passed`. A call interrupted by a stop or crash is finished the same way if its redial would already be that late.
+
 or as a systemd user service with `pbx-voice.service` (at the root of a release tarball, or [`docs/pbx-voice.service`](docs/pbx-voice.service) in the source).
 - **Without a service manager** (Grok Bot's computer has none): connect the agent through the stdio shim (below). It starts the daemon when a tool call finds it isn't running, so nothing needs to keep it running between calls.
 - **Detached:** a daemon started by `start` or the shim runs in its own session and isn't the shim's child, so it outlives the agent session that started it.

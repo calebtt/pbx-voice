@@ -438,6 +438,25 @@ public class ConversationFlowTests
         Assert.Equal(AlarmTests.Id(PbxVoiceService.Apology.Replace("{name}", "Alex")), call.Played[^1]);
     }
 
+    // #29: a cancel during the fallback is a cancellation, not degraded_to_message or failed.
+    [Theory]
+    [InlineData(true, 3, 0)]  // the confirmation prompt (disclosure, message, prompt)
+    [InlineData(true, 0, 1)]  // the capture after the prompt
+    [InlineData(false, 2, 0)] // the apology (disclosure, apology)
+    public async Task A_cancel_during_the_fallback_is_cancelled(bool withMessage, int cancelAtPlay, int cancelAtCapture)
+    {
+        using var h = new Harness();
+        var call = new FakeCall();
+        call.OnPlay = n => { if (n == cancelAtPlay) h.Executor.Cancel(h.Executor.CurrentCallId!); };
+        call.OnCapture = n => { if (n == cancelAtCapture) h.Executor.Cancel(h.Executor.CurrentCallId!); };
+
+        var (r, _, _) = await Run(h, new FakeVoiceSession { FailConnect = true }, call, Brief(withMessage));
+
+        Assert.Equal(Outcome.Cancelled, r.Outcome);
+        Assert.Equal("cancel_call", r.Reason);
+        Assert.Null(r.Conversation!.Outcome);
+    }
+
     [Fact]
     public async Task A_hang_up_during_the_disclosure_is_hung_up_early_and_not_redialed()
     {

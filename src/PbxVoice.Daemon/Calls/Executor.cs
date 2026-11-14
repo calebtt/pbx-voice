@@ -42,7 +42,10 @@ internal sealed class Executor
         _listener = listener;
     }
 
-    /// <summary>How long after it was requested a call may still start (PR-SCHED-4), for example behind another call.</summary>
+    /// <summary>
+    /// How late a call may still start (PR-SCHED-4), for example behind another call: its first
+    /// attempt after it was requested, and a redial or snooze call-back after it fell due.
+    /// </summary>
     public static TimeSpan Grace(CallType type) => type == CallType.Alarm ? TimeSpan.FromMinutes(15) : TimeSpan.FromMinutes(5);
 
     /// <summary>How long to wait for a PR-REG-9 re-register to succeed before dialing anyway.</summary>
@@ -82,12 +85,15 @@ internal sealed class Executor
 
     /// <summary>
     /// At startup: a call that was in progress when the daemon stopped gets its last attempt closed
-    /// as a SIP failure ("interrupted") and continues under the normal redial rules.
+    /// as a SIP failure ("interrupted") and continues under the normal redial rules, unless its
+    /// redial would already be past the grace window (#23); then it is finished.
     /// </summary>
     public void Recover()
     {
+        var now = _time.GetUtcNow();
         foreach (var r in _calls.Open().Where(r => r.Status == CallStatus.InProgress))
         {
+            var startedAt = r.Attempts.LastOrDefault()?.StartedAt ?? now;
             _calls.Update(r, c =>
             {
                 if (c.Attempts.LastOrDefault() is { Result: null } last)
@@ -99,6 +105,8 @@ internal sealed class Executor
                 c.Status = CallStatus.Pending;
             });
             Decide(r, r.Attempts.LastOrDefault()?.Result ?? AttemptResult.SipFailure);
+            if (r.Status == CallStatus.Pending && now > startedAt + TimeSpan.FromMinutes(r.Options.RetryMinutes) + Grace(r.Type))
+                Finish(r, Tally(r), LateReason(r));
         }
     }
 
@@ -109,6 +117,11 @@ internal sealed class Executor
         var open = _calls.Open();
         foreach (var r in open.Where(r => r.Status == CallStatus.Pending && r.Attempts.Count == 0 && now > r.FireTime + Grace(r.Type)))
             Finish(r, Outcome.Missed, "not placed within its grace window");
+        // A redial or snooze call-back gets the same grace (#23): after a stop, crash, or reboot
+        // between attempts, a call-back hours or days late is not placed.
+        foreach (var r in open.Where(r => r.Status == CallStatus.Pending && r.Attempts.Count > 0
+                     && r.NextAttemptAt is { } next && now > next + Grace(r.Type)))
+            Finish(r, Tally(r), LateReason(r));
 
         var due = open
             .Where(r => r.Status == CallStatus.Pending && r.NextAttemptAt is { } t && t <= now)
@@ -121,9 +134,14 @@ internal sealed class Executor
         return true;
     }
 
+    private static string LateReason(CallRecord r) =>
+        r.Attempts.LastOrDefault()?.Snooze == true ? "snooze_window_passed" : "redial_window_passed";
+
     /// <summary>Cancels a pending call, or cancels the ring or hangs up the call in progress.</summary>
     public bool Cancel(string callId)
     {
+        // Held across both paths: the executor makes a call current under the same lock, so a
+        // call is either the current attempt (cancel its token) or still pending (finish it here).
         lock (_lock)
         {
             if (_currentCallId == callId && _currentCts is { } cts)
@@ -131,12 +149,9 @@ internal sealed class Executor
                 cts.Cancel();
                 return true;
             }
+            var record = _calls.Open().FirstOrDefault(r => r.CallId == callId && r.Status == CallStatus.Pending);
+            return record is not null && Finish(record, Outcome.Cancelled, "cancel_call");
         }
-        var record = _calls.Open().FirstOrDefault(r => r.CallId == callId && r.Status == CallStatus.Pending);
-        if (record is null)
-            return false;
-        Finish(record, Outcome.Cancelled, "cancel_call");
-        return true;
     }
 
     /// <summary>Completes when the call has a final outcome, or false after <paramref name="timeout"/>.</summary>
@@ -165,6 +180,32 @@ internal sealed class Executor
     }
 
     private async Task RunAttemptAsync(CallRecord r, CancellationToken stop)
+    {
+        // The attempt is the current call from here on, before any wait, so a cancel_call that
+        // arrives during the checks or the re-register wait cancels this attempt (#22).
+        using var cts = CancellationTokenSource.CreateLinkedTokenSource(stop);
+        lock (_lock)
+        {
+            if (r.Status != CallStatus.Pending)
+                return; // cancelled between the due query and here
+            _currentCts = cts;
+            _currentCallId = r.CallId;
+        }
+        try
+        {
+            await RunAttemptCoreAsync(r, cts, stop).ConfigureAwait(false);
+        }
+        finally
+        {
+            lock (_lock)
+            {
+                _currentCts = null;
+                _currentCallId = null;
+            }
+        }
+    }
+
+    private async Task RunAttemptCoreAsync(CallRecord r, CancellationTokenSource cts, CancellationToken stop)
     {
         var policy = _policy.Current;
         var now = _time.GetUtcNow();
@@ -201,46 +242,36 @@ internal sealed class Executor
         }
 
         if (first)
-            await ReregisterIfRejectedAsync(r, stop).ConfigureAwait(false);
+            await ReregisterIfRejectedAsync(r, cts.Token).ConfigureAwait(false);
 
         var ring = TimeSpan.FromSeconds(r.Options.RingSeconds);
         var attempt = new AttemptRecord { Number = r.Attempts.Count + 1, StartedAt = now };
-        _calls.Update(r, c =>
+        // Only a call that is still pending and not cancelled becomes in progress; a finished record
+        // is never reopened. A daemon shutdown leaves the call pending for the next start.
+        bool started = _calls.TryUpdate(r, c => c.Status == CallStatus.Pending && !cts.IsCancellationRequested, c =>
         {
             c.Status = CallStatus.InProgress;
             c.NextAttemptAt = null;
             c.Attempts.Add(attempt);
         });
-
-        using var cts = CancellationTokenSource.CreateLinkedTokenSource(stop);
-        lock (_lock)
+        if (!started)
         {
-            _currentCts = cts;
-            _currentCallId = r.CallId;
+            if (cts.IsCancellationRequested && !stop.IsCancellationRequested)
+                Finish(r, Outcome.Cancelled, "cancel_call");
+            return;
         }
 
         AttemptResult result;
-        try
+        if (policy.Register && !policy.DialWhileUnregistered && !_phone.Registration.Registered
+            && !await _phone.WaitForRegistrationAsync(ring, cts.Token).ConfigureAwait(false))
         {
-            if (policy.Register && !policy.DialWhileUnregistered && !_phone.Registration.Registered
-                && !await _phone.WaitForRegistrationAsync(ring, cts.Token).ConfigureAwait(false))
-            {
-                // PR-REG-8: this PBX needs registration to dial, and it did not come back in time.
-                _calls.Update(r, _ => attempt.Detail = "registration down; not dialed");
-                result = cts.IsCancellationRequested && !stop.IsCancellationRequested ? AttemptResult.Cancelled : AttemptResult.SipFailure;
-            }
-            else
-            {
-                result = await DialAndRunAsync(r, attempt, policy, ring, cts.Token).ConfigureAwait(false);
-            }
+            // PR-REG-8: this PBX needs registration to dial, and it did not come back in time.
+            _calls.Update(r, _ => attempt.Detail = "registration down; not dialed");
+            result = cts.IsCancellationRequested && !stop.IsCancellationRequested ? AttemptResult.Cancelled : AttemptResult.SipFailure;
         }
-        finally
+        else
         {
-            lock (_lock)
-            {
-                _currentCts = null;
-                _currentCallId = null;
-            }
+            result = await DialAndRunAsync(r, attempt, policy, ring, cts.Token).ConfigureAwait(false);
         }
 
         // A daemon shutdown is not the agent's cancel: close the attempt and keep the call.
@@ -264,6 +295,11 @@ internal sealed class Executor
 
     private async Task<AttemptResult> DialAndRunAsync(CallRecord r, AttemptRecord attempt, PolicyFile policy, TimeSpan ring, CancellationToken ct)
     {
+        if (ct.IsCancellationRequested)
+        {
+            _calls.Update(r, _ => attempt.Detail = "cancelled before dialing");
+            return AttemptResult.Cancelled;
+        }
         DialResult dial;
         try
         {
@@ -405,29 +441,32 @@ internal sealed class Executor
 
     private void ScheduleNext(CallRecord r, TimeSpan delay)
     {
-        _calls.Update(r, c =>
+        _calls.TryUpdate(r, c => c.Status != CallStatus.Done, c =>
         {
             c.Status = CallStatus.Pending;
             c.NextAttemptAt = _time.GetUtcNow() + delay;
         });
     }
 
-    private void Finish(CallRecord r, Outcome outcome, string? reason)
+    /// <summary>Gives the call its final outcome. A call that is already done keeps its outcome (returns false).</summary>
+    private bool Finish(CallRecord r, Outcome outcome, string? reason)
     {
-        _calls.Update(r, c =>
+        if (!_calls.TryUpdate(r, c => c.Status != CallStatus.Done, c =>
         {
             c.Status = CallStatus.Done;
             c.Outcome = outcome;
             c.Reason = reason;
             c.NextAttemptAt = null;
             c.CompletedAt = _time.GetUtcNow();
-        });
+        }))
+            return false;
         Log.Information("Call {CallId} ({Type}) finished: {Outcome}{Reason}", r.CallId, r.Type, outcome, reason is null ? "" : $" ({reason})");
         lock (_lock)
         {
             if (_done.Remove(r.CallId, out var tcs))
                 tcs.TrySetResult();
         }
+        return true;
     }
 
     /// <summary>The contact must still be in the policy, and an alarm's contact must still be <c>self</c>.</summary>

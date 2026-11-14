@@ -303,7 +303,10 @@ internal sealed partial class PbxVoiceService
 
     /// <summary>
     /// Operator only: the MCP tools don't offer it. Refused while a call is in progress unless
-    /// forced; queued calls wait for the next start (and are missed after their grace window).
+    /// forced. Pending calls wait for the next start: a call not yet dialed is missed after its
+    /// grace window, and a call between attempts (a redial or snooze call-back) is finished with
+    /// <c>redial_window_passed</c> or <c>snooze_window_passed</c> once its next attempt is more
+    /// than the grace window late (15 minutes for an alarm, 5 for the other types).
     /// </summary>
     private object Shutdown(JsonElement args)
     {

@@ -9,7 +9,8 @@ internal sealed record SttResult(bool Ok, string? Text, string? Error)
 /// <summary>Speech-to-text for short replies (8 kHz μ-law).</summary>
 internal interface ISpeechToText
 {
-    Task<SttResult> TranscribeMuLawAsync(byte[] muLaw, IReadOnlyList<string> keyTerms, CancellationToken ct);
+    /// <param name="language">The policy's <c>speech.language</c>, the language the prompts were rendered in.</param>
+    Task<SttResult> TranscribeMuLawAsync(byte[] muLaw, IReadOnlyList<string> keyTerms, string language, CancellationToken ct);
 }
 
 /// <summary>Text-to-speech rendered to 8 kHz μ-law when a call is requested.</summary>
@@ -21,7 +22,7 @@ internal interface ITextToSpeech
 /// <summary>Used when no xAI key is configured: every request fails, and the daemon falls back.</summary>
 internal sealed class UnavailableSpeech : ISpeechToText, ITextToSpeech
 {
-    public Task<SttResult> TranscribeMuLawAsync(byte[] muLaw, IReadOnlyList<string> keyTerms, CancellationToken ct) =>
+    public Task<SttResult> TranscribeMuLawAsync(byte[] muLaw, IReadOnlyList<string> keyTerms, string language, CancellationToken ct) =>
         Task.FromResult(SttResult.Failure("no XAI_API_KEY configured"));
 
     public Task<byte[]> SynthesizeMuLawAsync(string text, string voice, string language, double speed, CancellationToken ct) =>

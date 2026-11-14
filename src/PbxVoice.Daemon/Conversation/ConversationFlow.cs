@@ -133,7 +133,7 @@ internal static class ConversationFlow
             {
                 if ((await ctx.PlayAsync(prompt).ConfigureAwait(false)).End != PlayEnd.Completed)
                     break;
-                var reply = await ctx.Listener.ListenAsync(ctx.Line, alarm: false, ctx.Policy.Phrases, ctx.Ct).ConfigureAwait(false);
+                var reply = await ctx.Listener.ListenAsync(ctx.Line, alarm: false, ctx.Policy.Phrases, ctx.Policy.Speech.Language, ctx.Ct).ConfigureAwait(false);
                 ctx.Update((_, a) => a.Replies.Add(reply.Record));
                 confirmed = reply.Intent == ReplyIntent.Confirm;
                 if (reply.Intent == ReplyIntent.Repeat && (await ctx.PlayAsync(ctx.Clip(call.Clips.Message)!).ConfigureAwait(false)).End != PlayEnd.Completed)

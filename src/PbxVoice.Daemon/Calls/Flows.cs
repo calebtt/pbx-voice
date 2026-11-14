@@ -75,7 +75,7 @@ internal static class AlarmFlow
             if (played.End == PlayEnd.HungUp)
                 return AttemptResult.NotAcknowledged;
 
-            var reply = await ctx.Listener.ListenAsync(ctx.Line, alarm: true, ctx.Policy.Phrases, ctx.Ct).ConfigureAwait(false);
+            var reply = await ctx.Listener.ListenAsync(ctx.Line, alarm: true, ctx.Policy.Phrases, ctx.Policy.Speech.Language, ctx.Ct).ConfigureAwait(false);
             if (reply.Cancelled)
                 return AttemptResult.Cancelled;
 
@@ -177,7 +177,7 @@ internal static class MessageFlow
             if (asked.End == PlayEnd.HungUp)
                 return AttemptResult.PlayedUnconfirmed;
 
-            var reply = await ctx.Listener.ListenAsync(ctx.Line, alarm: false, ctx.Policy.Phrases, ctx.Ct).ConfigureAwait(false);
+            var reply = await ctx.Listener.ListenAsync(ctx.Line, alarm: false, ctx.Policy.Phrases, ctx.Policy.Speech.Language, ctx.Ct).ConfigureAwait(false);
             if (reply.Cancelled)
                 return AttemptResult.Cancelled;
 

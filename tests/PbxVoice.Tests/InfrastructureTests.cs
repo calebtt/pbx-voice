@@ -210,6 +210,20 @@ public class XaiTests
     }
 
     [Fact]
+    public void Tts_audio_starting_with_0x7B_is_audio_when_the_content_type_says_so()
+    {
+        // 0x7B is "{" and also a valid mu-law sample (#26).
+        var raw = Enumerable.Repeat((byte)0x7B, 2000).ToArray();
+        Assert.Equal(raw, XaiSpeech.ExtractAudio(raw, "audio/basic"));
+        Assert.Equal(raw, XaiSpeech.ExtractAudio(raw, "audio/x-mulaw"));
+
+        var json = Encoding.UTF8.GetBytes($$"""{"audio":"{{Convert.ToBase64String(new byte[] { 1, 2, 3 })}}"}""");
+        Assert.Equal(new byte[] { 1, 2, 3 }, XaiSpeech.ExtractAudio(json, "application/json"));
+        Assert.Equal(new byte[] { 1, 2, 3 }, XaiSpeech.ExtractAudio(json, null));                       // no content type: sniffed
+        Assert.Equal(new byte[] { 1, 2, 3 }, XaiSpeech.ExtractAudio(json, "application/octet-stream")); // not audio: sniffed
+    }
+
+    [Fact]
     public async Task Stt_sends_raw_mulaw_as_a_multipart_form_with_the_file_last()
     {
         var rec = new Recorder
@@ -218,7 +232,7 @@ public class XaiTests
         };
         using var xai = new XaiSpeech("test-key", handler: rec);
 
-        var result = await xai.TranscribeMuLawAsync(new byte[800], new[] { "i'm up", "snooze" }, CancellationToken.None);
+        var result = await xai.TranscribeMuLawAsync(new byte[800], new[] { "i'm up", "snooze" }, "es", CancellationToken.None);
 
         Assert.True(result.Ok);
         Assert.Equal("I'm up.", result.Text);
@@ -228,6 +242,7 @@ public class XaiTests
         Assert.Contains("mulaw", form);
         Assert.Contains("name=sample_rate", form);
         Assert.Contains("name=keyterm", form);
+        Assert.Matches(@"name=language\r\n(.*\r\n)*?\r\nes\r\n", form); // the language passed in, not a fixed "en" (#30)
         Assert.True(form.LastIndexOf("name=file", StringComparison.Ordinal) > form.LastIndexOf("name=keyterm", StringComparison.Ordinal));
     }
 
@@ -236,7 +251,7 @@ public class XaiTests
     {
         var rec = new Recorder { Respond = () => new HttpResponseMessage(HttpStatusCode.ServiceUnavailable) { Content = new StringContent("busy") } };
         using var xai = new XaiSpeech("test-key", handler: rec);
-        var result = await xai.TranscribeMuLawAsync(new byte[800], Array.Empty<string>(), CancellationToken.None);
+        var result = await xai.TranscribeMuLawAsync(new byte[800], Array.Empty<string>(), "en", CancellationToken.None);
         Assert.False(result.Ok);
         Assert.Contains("503", result.Error);
     }

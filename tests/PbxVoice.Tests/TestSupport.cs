@@ -174,14 +174,16 @@ internal sealed class FakeStt : ISpeechToText
     private readonly Queue<SttResult> _results = new();
 
     public List<IReadOnlyList<string>> KeyTerms { get; } = new();
+    public List<string> Languages { get; } = new();
     public TimeSpan Delay { get; set; }
 
     public FakeStt Says(params string[] texts) { foreach (var t in texts) _results.Enqueue(SttResult.Success(t)); return this; }
     public FakeStt Fails(string error = "503") { _results.Enqueue(SttResult.Failure(error)); return this; }
 
-    public async Task<SttResult> TranscribeMuLawAsync(byte[] muLaw, IReadOnlyList<string> keyTerms, CancellationToken ct)
+    public async Task<SttResult> TranscribeMuLawAsync(byte[] muLaw, IReadOnlyList<string> keyTerms, string language, CancellationToken ct)
     {
         KeyTerms.Add(keyTerms);
+        Languages.Add(language);
         if (Delay > TimeSpan.Zero)
             await Task.Delay(Delay, ct);
         return _results.Count > 0 ? _results.Dequeue() : SttResult.Success("");

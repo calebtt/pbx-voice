@@ -41,11 +41,19 @@ internal sealed class XaiSpeech : ISpeechToText, ITextToSpeech, IDisposable
         return ExtractAudio(payload, response.Content.Headers.ContentType?.MediaType);
     }
 
-    /// <summary>The TTS response is either JSON with base64 <c>audio</c> or the audio itself.</summary>
+    /// <summary>
+    /// The TTS response is JSON with base64 <c>audio</c>, a WAV file, or headerless μ-law. Which of
+    /// these <c>POST /v1/tts</c> returns for <c>codec: mulaw</c> has not been recorded, so all three
+    /// are handled. An <c>audio/*</c> content type is trusted as audio: 0x7B (<c>{</c>) is a valid
+    /// μ-law sample, so the first byte decides only when the content type doesn't (#26).
+    /// </summary>
     internal static byte[] ExtractAudio(byte[] payload, string? mediaType)
     {
         byte[] audio = payload;
-        if (mediaType == "application/json" || (payload.Length > 0 && payload[0] == (byte)'{'))
+        bool declaredAudio = mediaType is not null && mediaType.StartsWith("audio/", StringComparison.OrdinalIgnoreCase);
+        bool json = string.Equals(mediaType, "application/json", StringComparison.OrdinalIgnoreCase)
+                    || (!declaredAudio && payload.Length > 0 && payload[0] == (byte)'{');
+        if (json)
         {
             using var doc = JsonDocument.Parse(payload);
             string b64 = doc.RootElement.GetProperty("audio").GetString()
@@ -57,14 +65,14 @@ internal sealed class XaiSpeech : ISpeechToText, ITextToSpeech, IDisposable
             : audio;
     }
 
-    public async Task<SttResult> TranscribeMuLawAsync(byte[] muLaw, IReadOnlyList<string> keyTerms, CancellationToken ct)
+    public async Task<SttResult> TranscribeMuLawAsync(byte[] muLaw, IReadOnlyList<string> keyTerms, string language, CancellationToken ct)
     {
         try
         {
             using var form = new MultipartFormDataContent();
             form.Add(new StringContent("mulaw"), "audio_format");
             form.Add(new StringContent("8000"), "sample_rate");
-            form.Add(new StringContent("en"), "language");
+            form.Add(new StringContent(language), "language"); // the policy's speech.language (#30)
             // Key terms bias recognition toward the phrases the prompt asked for.
             foreach (var term in keyTerms.Where(t => t.Length is > 0 and <= 50).Distinct().Take(100))
                 form.Add(new StringContent(term), "keyterm");

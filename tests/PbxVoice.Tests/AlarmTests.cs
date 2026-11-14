@@ -102,6 +102,20 @@ public class AlarmTests
     }
 
     [Fact]
+    public async Task Replies_are_transcribed_in_the_policys_language()
+    {
+        var policy = Policies.Standard();
+        policy.Speech.Language = "es";
+        using var h = new Harness(policy);
+        h.Phone.Answer(new FakeCall(new[] { Replies.Speech(700) }));
+        h.Stt.Says("I'm up");
+
+        await h.RunToEnd(await h.CallNow(new { type = "alarm", to = "me" }));
+
+        Assert.Equal(new[] { "es" }, h.Stt.Languages);
+    }
+
+    [Fact]
     public async Task Snooze_calls_back_later_and_does_not_use_an_attempt()
     {
         using var h = new Harness();
@@ -171,7 +185,7 @@ public class AlarmTests
         h.Stt.Says("I'm up");
         var call = new FakeCall(new[] { Replies.Speech(1000) });
 
-        var reply = await listener.ListenAsync(call, alarm: true, new Policy.Phrases(), CancellationToken.None);
+        var reply = await listener.ListenAsync(call, alarm: true, new Policy.Phrases(), "en", CancellationToken.None);
 
         Assert.Equal(AckSource.SpeechDetected, reply.Source);
         Assert.Equal("timed out", reply.Record.SttError);

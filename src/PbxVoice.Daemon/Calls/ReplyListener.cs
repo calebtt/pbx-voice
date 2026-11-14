@@ -33,7 +33,8 @@ internal sealed class ReplyListener
         _sttTimeout = sttTimeout ?? DefaultSttTimeout;
     }
 
-    public async Task<Reply> ListenAsync(IActiveCall call, bool alarm, Phrases phrases, CancellationToken ct)
+    /// <param name="language">The language to transcribe in: the policy's <c>speech.language</c>.</param>
+    public async Task<Reply> ListenAsync(IActiveCall call, bool alarm, Phrases phrases, string language, CancellationToken ct)
     {
         var capture = await call.CaptureAsync(DetectorSettings.Reply, ct).ConfigureAwait(false);
         var record = new ReplyRecord
@@ -70,7 +71,7 @@ internal sealed class ReplyListener
             budget.CancelAfter(_sttTimeout);
             try
             {
-                stt = await _stt.TranscribeMuLawAsync(capture.MuLaw, keyTerms, budget.Token).ConfigureAwait(false);
+                stt = await _stt.TranscribeMuLawAsync(capture.MuLaw, keyTerms, language, budget.Token).ConfigureAwait(false);
             }
             catch (OperationCanceledException) when (!ct.IsCancellationRequested)
             {

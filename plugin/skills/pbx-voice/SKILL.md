@@ -60,7 +60,7 @@ Each type's defaults are in parentheses. Set an option only when the user asks f
 
   It redials only when nobody answered. Options: `redial` (true), `max_attempts` (2), `retry_minutes` (10), `ring_seconds` (30). Outcomes: `completed` (every required answer backed by the callee's words), `partial`, `declined`, `voicemail_left`, `degraded_to_message`, `not_answered`, `missed`, `failed`. It costs voice-API time; keep `max_minutes` small.
 
-`missed` means the daemon couldn't start the call in time: within 15 minutes of `call_now` for an alarm, or 5 for the other types (for example because another call was still going). It was never dialed.
+`missed` means the daemon couldn't start the call in time: within 15 minutes of `call_now` for an alarm, or 5 for the other types (for example because another call was still going). It was never dialed. Likewise a redial or snooze call-back more than that late (for example because the daemon was stopped between attempts) is not placed: the call ends with the outcome of its attempts so far and the reason `redial_window_passed` or `snooze_window_passed`.
 
 ## Patterns
 

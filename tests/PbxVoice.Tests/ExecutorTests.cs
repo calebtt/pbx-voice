@@ -198,4 +198,164 @@ public class ExecutorTests
         Assert.Equal(AttemptResult.SipFailure, recovered.Attempts[0].Result);
         Assert.NotNull(recovered.NextAttemptAt);
     }
+
+    // ---- #22: a cancel while the executor holds the call before dialing -------------------
+
+    private static async Task<(Harness H, string Id, Task Running, TaskCompletionSource Release)> HoldInReregisterWait()
+    {
+        var h = new Harness();
+        h.Phone.Registration = new RegistrationInfo("HardFailure", false, "403 Forbidden", null);
+        var release = new TaskCompletionSource();
+        h.Phone.HoldRegistrationWait = release.Task;
+        var id = await h.CallNow(new { type = "alarm", to = "me" });
+        var running = h.RunDue();
+        await h.Phone.RegistrationWaitStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        return (h, id, running, release);
+    }
+
+    [Fact]
+    public async Task A_cancel_during_the_re_register_wait_is_not_dialed()
+    {
+        var (h, id, running, release) = await HoldInReregisterWait();
+        using var _ = h;
+
+        Assert.Equal(id, h.Executor.CurrentCallId);
+        Assert.True(h.Executor.Cancel(id));
+        // Back from the wait: the cancel must win, with or without registration.
+        h.Phone.Registration = new RegistrationInfo("Registered", true, null, null);
+        release.SetResult();
+        await running;
+
+        var r = h.Record(id);
+        Assert.Empty(h.Phone.Dials);
+        Assert.Equal(CallStatus.Done, r.Status);
+        Assert.Equal(Outcome.Cancelled, r.Outcome);
+        Assert.Empty(r.Attempts);
+    }
+
+    [Fact]
+    public async Task A_shutdown_during_the_re_register_wait_leaves_the_call_pending()
+    {
+        using var h = new Harness();
+        h.Phone.Registration = new RegistrationInfo("HardFailure", false, "403 Forbidden", null);
+        var release = new TaskCompletionSource();
+        h.Phone.HoldRegistrationWait = release.Task;
+        var id = await h.CallNow(new { type = "alarm", to = "me" });
+        using var stop = new CancellationTokenSource();
+        var running = h.Executor.RunDueAsync(stop.Token);
+        await h.Phone.RegistrationWaitStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+        stop.Cancel();
+        release.SetResult();
+        await running;
+
+        var r = h.Record(id);
+        Assert.Empty(h.Phone.Dials);
+        Assert.Equal(CallStatus.Pending, r.Status);
+        Assert.Empty(r.Attempts);
+    }
+
+    [Fact]
+    public async Task A_finished_call_is_never_reopened()
+    {
+        using var h = new Harness();
+        var id = await h.CallNow(new { type = "alarm", to = "me" });
+        var record = h.Calls.Open().Single();
+        Assert.True(h.Executor.Cancel(id));
+
+        // The executor held a reference from an earlier due query.
+        Assert.False(h.Calls.TryUpdate(record, c => c.Status == CallStatus.Pending, c => c.Status = CallStatus.InProgress));
+        await h.RunDue();
+
+        Assert.Equal(CallStatus.Done, h.Record(id).Status);
+        Assert.Equal(Outcome.Cancelled, h.Record(id).Outcome);
+        Assert.Empty(h.Phone.Dials);
+    }
+
+    // ---- #23: redials and snooze call-backs have a grace window too -----------------------
+
+    [Fact]
+    public async Task A_redial_long_overdue_after_a_restart_is_not_dialed()
+    {
+        using var h = new Harness();
+        h.Phone.Fail(DialKind.NoAnswer);
+        var id = await h.CallNow(new { type = "alarm", to = "me" });
+        await h.RunDue();
+        Assert.Equal(CallStatus.Pending, h.Record(id).Status);
+
+        // The daemon was stopped between attempts and starts again days later.
+        h.Time.Advance(TimeSpan.FromDays(3) + TimeSpan.FromHours(7));
+        var calls = new CallStore(h.Paths.Calls);
+        var executor = new Executor(h.Time, h.Phone, h.Policy, calls, h.Clips, new ReplyListener(h.Stt, h.Time, TimeSpan.FromSeconds(3)));
+        executor.Recover();
+        while (await executor.RunDueAsync(CancellationToken.None)) { }
+
+        var r = calls.Snapshot(id)!;
+        Assert.Single(h.Phone.Dials);
+        Assert.Equal(CallStatus.Done, r.Status);
+        Assert.Equal(Outcome.NotAnswered, r.Outcome);
+        Assert.Equal("redial_window_passed", r.Reason);
+    }
+
+    [Theory]
+    [InlineData("alarm", 3 + 14, 2)]   // 14 minutes late: within the alarm's 15
+    [InlineData("alarm", 3 + 16, 1)]
+    [InlineData("message", 10 + 4, 2)] // within the message's 5
+    [InlineData("message", 10 + 6, 1)]
+    public async Task A_slightly_late_redial_is_still_placed(string type, int minutesAfterFirst, int dials)
+    {
+        using var h = new Harness();
+        h.Phone.Fail(DialKind.NoAnswer).Fail(DialKind.NoAnswer);
+        var id = await h.CallNow(new { type, to = "me", text = type == "message" ? "Hello." : null, options = new { max_attempts = 2 } });
+        await h.RunDue();
+
+        h.Time.Advance(TimeSpan.FromMinutes(minutesAfterFirst));
+        await h.RunDue();
+
+        Assert.Equal(dials, h.Phone.Dials.Count);
+        if (dials == 1)
+            Assert.Equal("redial_window_passed", h.Record(id).Reason);
+    }
+
+    [Fact]
+    public async Task A_snooze_call_back_long_overdue_is_not_dialed()
+    {
+        using var h = new Harness();
+        h.Phone.Answer(new FakeCall(new[] { Replies.Speech(700) }));
+        h.Stt.Says("snooze");
+        var id = await h.CallNow(new { type = "alarm", to = "me" });
+        await h.RunDue();
+        Assert.Equal(1, h.Record(id).Snoozes);
+
+        h.Time.Advance(TimeSpan.FromHours(5));
+        await h.RunDue();
+
+        var r = h.Record(id);
+        Assert.Single(h.Phone.Dials);
+        Assert.Equal(Outcome.NotAcknowledged, r.Outcome);
+        Assert.Equal("snooze_window_passed", r.Reason);
+    }
+
+    [Fact]
+    public async Task A_call_interrupted_long_ago_is_finished_at_restart_not_redialed()
+    {
+        using var h = new Harness();
+        var id = await h.CallNow(new { type = "alarm", to = "me" });
+        var r = h.Calls.Open().Single();
+        h.Calls.Update(r, c =>
+        {
+            c.Status = CallStatus.InProgress;
+            c.Attempts.Add(new AttemptRecord { Number = 1, StartedAt = h.Time.GetUtcNow() });
+        });
+        h.Time.Advance(TimeSpan.FromHours(8));
+
+        h.Executor.Recover();
+        await h.RunDue();
+
+        var done = h.Record(id);
+        Assert.Empty(h.Phone.Dials);
+        Assert.Equal(CallStatus.Done, done.Status);
+        Assert.Equal(Outcome.Failed, done.Outcome); // the only attempt is a SIP failure ("interrupted")
+        Assert.Equal("redial_window_passed", done.Reason);
+    }
 }

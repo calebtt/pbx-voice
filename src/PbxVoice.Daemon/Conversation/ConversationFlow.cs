@@ -113,8 +113,9 @@ internal static class ConversationFlow
         var conv = call.Conversation!;
         if (conv.Brief.Message is null)
         {
-            if (ctx.Clip(call.Clips.Apology) is { } apology)
-                await ctx.PlayAsync(apology).ConfigureAwait(false);
+            if (ctx.Clip(call.Clips.Apology) is { } apology
+                && (await ctx.PlayAsync(apology).ConfigureAwait(false)).End == PlayEnd.Cancelled)
+                return AttemptResult.Cancelled;
             await ctx.HangupAsync().ConfigureAwait(false);
             ctx.Update((c, _) => { c.Conversation!.Outcome = Outcome.Failed; c.Conversation.OutcomeReason = "voice session unavailable; apology played"; c.Conversation.EndedBy = "session_failed"; });
             return AttemptResult.Conversed;
@@ -129,14 +130,26 @@ internal static class ConversationFlow
         bool confirmed = false;
         if (delivered && ctx.Clip(call.Clips.ConfirmPrompt) is { } prompt)
         {
+            // A cancel_call or shutdown during any play or capture ends the attempt as cancelled
+            // before an outcome is written (#29); the executor tells the two apart.
             for (int ask = 0; ask < 2 && !confirmed && ctx.Line.IsUp; ask++)
             {
-                if ((await ctx.PlayAsync(prompt).ConfigureAwait(false)).End != PlayEnd.Completed)
+                var asked = (await ctx.PlayAsync(prompt).ConfigureAwait(false)).End;
+                if (asked == PlayEnd.Cancelled)
+                    return AttemptResult.Cancelled;
+                if (asked != PlayEnd.Completed)
                     break;
                 var reply = await ctx.Listener.ListenAsync(ctx.Line, alarm: false, ctx.Policy.Phrases, ctx.Ct).ConfigureAwait(false);
+                if (reply.Cancelled)
+                    return AttemptResult.Cancelled;
                 ctx.Update((_, a) => a.Replies.Add(reply.Record));
                 confirmed = reply.Intent == ReplyIntent.Confirm;
-                if (reply.Intent == ReplyIntent.Repeat && (await ctx.PlayAsync(ctx.Clip(call.Clips.Message)!).ConfigureAwait(false)).End != PlayEnd.Completed)
+                if (reply.Intent != ReplyIntent.Repeat)
+                    continue;
+                var replay = (await ctx.PlayAsync(ctx.Clip(call.Clips.Message)!).ConfigureAwait(false)).End;
+                if (replay == PlayEnd.Cancelled)
+                    return AttemptResult.Cancelled;
+                if (replay != PlayEnd.Completed)
                     break;
             }
         }

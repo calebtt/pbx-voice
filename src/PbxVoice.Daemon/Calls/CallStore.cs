@@ -53,6 +53,22 @@ internal sealed class CallStore
         }
     }
 
+    /// <summary>
+    /// Applies <paramref name="change"/> only if <paramref name="condition"/> holds, both under the
+    /// store lock. Returns false, without saving, when it does not.
+    /// </summary>
+    public bool TryUpdate(CallRecord record, Func<CallRecord, bool> condition, Action<CallRecord> change)
+    {
+        lock (_lock)
+        {
+            if (!condition(record))
+                return false;
+            change(record);
+            Write(record);
+            return true;
+        }
+    }
+
     /// <summary>A deep copy, safe to serialize while the executor keeps working on the record.</summary>
     public CallRecord? Snapshot(string callId)
     {

@@ -92,6 +92,19 @@ internal sealed class CallStore
         }
     }
 
+    /// <summary>Every clip id that a record still holds, open or finished.</summary>
+    public HashSet<string> ClipIdsInUse()
+    {
+        lock (_lock)
+        {
+            return _records.Values
+                .Select(r => r.Clips)
+                .SelectMany(c => new[] { c.Prompt, c.Closing, c.Apology, c.SnoozeAck, c.Message, c.ConfirmPrompt, c.Disclosure })
+                .OfType<string>()
+                .ToHashSet();
+        }
+    }
+
     /// <summary>Deletes finished records created before <paramref name="cutoff"/> (PR-SAFE-7).</summary>
     public int Prune(DateTimeOffset cutoff)
     {

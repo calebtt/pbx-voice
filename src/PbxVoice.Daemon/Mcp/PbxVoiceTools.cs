@@ -55,7 +55,7 @@ internal sealed class OptionsInput
     [Description("Minutes between attempts. Defaults: alarm 3, message 10, conversation 10.")]
     public int? RetryMinutes { get; set; }
 
-    [Description("Seconds to let it ring, counted from when it starts ringing. Defaults: alarm 45, message 30, conversation 7.")]
+    [Description("Seconds to let it ring, counted from when it starts ringing. Defaults: alarm 45, message 30, conversation 30.")]
     public int? RingSeconds { get; set; }
 
     [Description("Alarm only: minutes before calling back after the callee says \"snooze\". Default 10.")]

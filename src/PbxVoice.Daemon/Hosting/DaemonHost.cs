@@ -182,9 +182,9 @@ internal sealed class DaemonHost
                 var now = time.GetUtcNow();
                 if (now >= nextPrune)
                 {
-                    int removed = calls.Prune(now - TimeSpan.FromDays(policy.Current.RetentionDays));
-                    if (removed > 0)
-                        Log.Information("Removed {Count} call records past retention", removed);
+                    var (records, clipFiles) = Retention.Run(calls, clips, now - TimeSpan.FromDays(policy.Current.RetentionDays));
+                    if (records > 0 || clipFiles > 0)
+                        Log.Information("Removed {Records} call records and {Clips} rendered clips past retention", records, clipFiles);
                     nextPrune = now + TimeSpan.FromHours(6);
                 }
                 if (now >= nextPing)

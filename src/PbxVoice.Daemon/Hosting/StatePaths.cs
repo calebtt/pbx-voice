@@ -21,7 +21,6 @@ internal sealed class StatePaths
     public string Secrets => Path.Combine(Root, "secrets.env");
     public string Clips => Path.Combine(Root, "clips");
     public string Calls => Path.Combine(Root, "calls");
-    public string Tmp => Path.Combine(Root, "tmp");
     /// <summary>
     /// <c>control.sock</c> in the state directory, unless that path is too long for a Unix socket
     /// (about 108 bytes). Then a short private path, the same for the daemon and <c>ctl</c>:
@@ -75,7 +74,7 @@ internal sealed class StatePaths
 
     public void EnsureCreated()
     {
-        foreach (var dir in new[] { Root, Clips, Calls, Tmp })
+        foreach (var dir in new[] { Root, Clips, Calls })
             CreatePrivateDirectory(dir);
     }
 

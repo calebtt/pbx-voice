@@ -176,13 +176,47 @@ internal sealed class ClipStore
     public async Task<string> RenderAsync(string text, Policy.SpeechSettings speech, CancellationToken ct)
     {
         string id = KeyFor(text, speech.Voice, speech.Language, speech.Speed);
-        if (File.Exists(PathFor(id)))
+        string path = PathFor(id);
+        if (File.Exists(path))
+        {
+            // Reused: mark it fresh, so a retention pass can't delete it before its record is saved.
+            try { File.SetLastWriteTimeUtc(path, DateTime.UtcNow); }
+            catch (IOException) { }
             return id;
+        }
         byte[] muLaw = await _tts.SynthesizeMuLawAsync(text, speech.Voice, speech.Language, speech.Speed, ct).ConfigureAwait(false);
         if (muLaw.Length < 800)
             throw new InvalidDataException($"text-to-speech returned {muLaw.Length} bytes");
         SecureFile.WriteAllBytes(PathFor(id), MuLawWav.Build(muLaw));
         return id;
+    }
+
+    /// <summary>
+    /// Deletes rendered clips last written before <paramref name="cutoffUtc"/> that no call record
+    /// still uses (#28). A clip needed again later, such as a fixed prompt, is rendered again.
+    /// </summary>
+    public int Prune(DateTime cutoffUtc, IReadOnlySet<string> inUse)
+    {
+        if (!Directory.Exists(_dir))
+            return 0;
+        int removed = 0;
+        foreach (var file in Directory.EnumerateFiles(_dir, "*.wav"))
+        {
+            if (inUse.Contains(Path.GetFileNameWithoutExtension(file)))
+                continue;
+            try
+            {
+                if (File.GetLastWriteTimeUtc(file) >= cutoffUtc)
+                    continue;
+                File.Delete(file);
+                removed++;
+            }
+            catch (IOException)
+            {
+                // Left for the next pass.
+            }
+        }
+        return removed;
     }
 
     private string PathFor(string id) => Path.Combine(_dir, id + ".wav");

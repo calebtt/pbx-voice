@@ -261,3 +261,36 @@ public class JsonOptionsTests
         Assert.NotNull(Json.Options.TypeInfoResolver);
     }
 }
+
+/// <summary>The defaults an agent reads in the tool schema are the ones the code uses (#31).</summary>
+public class ToolDescriptionTests
+{
+    private static string DescriptionOf(string property) =>
+        typeof(PbxVoice.Mcp.OptionsInput).GetProperty(property)!
+            .GetCustomAttributes(typeof(System.ComponentModel.DescriptionAttribute), false)
+            .Cast<System.ComponentModel.DescriptionAttribute>().Single().Description;
+
+    [Theory]
+    [InlineData("MaxAttempts")]
+    [InlineData("RetryMinutes")]
+    [InlineData("RingSeconds")]
+    public void Per_type_defaults_in_the_option_descriptions_match_the_code(string property)
+    {
+        var m = System.Text.RegularExpressions.Regex.Match(DescriptionOf(property), @"alarm (\d+), message (\d+), conversation (\d+)");
+        Assert.True(m.Success, $"{property}: no per-type defaults in the description");
+        var getter = typeof(CallOptions).GetProperty(property)!;
+        Assert.Equal(
+            new[] { CallType.Alarm, CallType.Message, CallType.Conversation }.Select(t => Convert.ToInt32(getter.GetValue(CallOptions.Defaults(t)))),
+            new[] { 1, 2, 3 }.Select(i => int.Parse(m.Groups[i].Value)));
+    }
+
+    [Theory]
+    [InlineData("SnoozeMinutes")]
+    [InlineData("MaxSnoozes")]
+    public void Alarm_only_defaults_in_the_option_descriptions_match_the_code(string property)
+    {
+        var m = System.Text.RegularExpressions.Regex.Match(DescriptionOf(property), @"Default (\d+)");
+        Assert.True(m.Success);
+        Assert.Equal(Convert.ToInt32(typeof(CallOptions).GetProperty(property)!.GetValue(CallOptions.Defaults(CallType.Alarm))), int.Parse(m.Groups[1].Value));
+    }
+}

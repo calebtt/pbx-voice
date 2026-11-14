@@ -49,7 +49,8 @@ internal sealed class DaemonHost
             secrets = Secrets.Load(paths.Secrets, env);
             sipConfig = secrets.ToSipConfig();
         }
-        catch (Exception ex) when (ex is InvalidDataException or InvalidOperationException or System.Text.Json.JsonException)
+        catch (Exception ex) when (ex is InvalidDataException or InvalidOperationException or System.Text.Json.JsonException
+                                       or IOException or UnauthorizedAccessException)
         {
             Log.Error("{Error}", ex.Message);
             return 2;

@@ -159,7 +159,7 @@ Tools: `call_now`, `wait_for_call`, `cancel_call`, `list_calls`, `get_call`, `li
   args = ["mcp-stdio"]
   ```
 
-**When the daemon runs on another host,** the agent connects over HTTP. The daemon serves MCP at `http://127.0.0.1:8765/mcp` (Streamable HTTP). Every request needs the bearer token the daemon writes to `mcp-token` in the state directory on first start; `pbx-voice mcp-token` prints the endpoint and header. The daemon must already be running, because HTTP can't start it.
+**When the daemon runs on another host,** the agent connects over HTTP. The daemon serves MCP at `http://127.0.0.1:8765/mcp` (Streamable HTTP). Every request needs the bearer token the daemon writes to `mcp-token` in the state directory on first start; `pbx-voice mcp-token` prints the endpoint and header (with `PBX_VOICE_MCP_LISTEN=off` it says the HTTP front is off instead). The daemon must already be running, because HTTP can't start it.
 
 ```toml
 [mcp_servers.pbx-voice]

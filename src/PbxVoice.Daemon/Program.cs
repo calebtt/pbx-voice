@@ -91,13 +91,20 @@ try
         }
         case "mcp-token":
         {
+            string listen = Environment.GetEnvironmentVariable("PBX_VOICE_MCP_LISTEN") is { Length: > 0 } l ? l : PbxVoice.Mcp.McpHttpFront.DefaultListen;
+            if (listen.Equals("off", StringComparison.OrdinalIgnoreCase))
+            {
+                // #32: as in DaemonHost, "off" means no HTTP front, so there is no endpoint to print.
+                Console.WriteLine("The HTTP MCP front is off (PBX_VOICE_MCP_LISTEN=off), so there is no endpoint or token to use.");
+                Console.WriteLine("Connect agents with `pbx-voice mcp-stdio`, which talks to the daemon over its control socket and needs no token.");
+                return 0;
+            }
             var paths = StatePaths.FromEnvironment();
             if (!File.Exists(paths.McpToken))
             {
                 Console.Error.WriteLine($"no token yet at {paths.McpToken}; start the daemon once to create it");
                 return 1;
             }
-            string listen = Environment.GetEnvironmentVariable("PBX_VOICE_MCP_LISTEN") is { Length: > 0 } l ? l : PbxVoice.Mcp.McpHttpFront.DefaultListen;
             Console.WriteLine($"endpoint: http://{listen}{PbxVoice.Mcp.McpHttpFront.Path}");
             Console.WriteLine($"header:   Authorization: Bearer {File.ReadAllText(paths.McpToken).Trim()}");
             return 0;

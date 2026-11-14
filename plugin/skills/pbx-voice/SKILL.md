@@ -58,7 +58,7 @@ Each type's defaults are in parentheses. Set an option only when the user asks f
   - `ask`: questions, as `{name, question, required, hint}`.
   - `max_minutes`: the hard limit.
 
-  It redials only when nobody answered. Options: `redial` (true), `max_attempts` (2), `retry_minutes` (10), `ring_seconds` (30). Outcomes: `completed` (every required answer backed by the callee's words), `partial`, `declined`, `voicemail_left`, `degraded_to_message`, `not_answered`, `missed`, `failed`. It costs voice-API time; keep `max_minutes` small.
+  It redials only when nobody answered. Options: `redial` (true), `max_attempts` (2), `retry_minutes` (10), `ring_seconds` (30). Outcomes: `completed` (every required answer backed by the callee's words, and at least one answer or the confirmed message; optional questions left unanswered with no message are `failed`), `partial`, `declined`, `voicemail_left`, `degraded_to_message`, `not_answered`, `missed`, `failed`. It costs voice-API time; keep `max_minutes` small.
 
 `missed` means the daemon couldn't start the call in time: within 15 minutes of `call_now` for an alarm, or 5 for the other types (for example because another call was still going). It was never dialed.
 

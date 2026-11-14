@@ -20,6 +20,9 @@ internal sealed class FakeVoiceSession : IVoiceSession
 
     /// <summary>Connecting never completes; the flow's 3 s limit has to end it.</summary>
     public bool HangConnect { get; set; }
+    /// <summary>Server events sent right after the forced message (e.g. the callee talking over it).</summary>
+    public VoiceEvent[] AfterForce { get; init; } = Array.Empty<VoiceEvent>();
+
     public VoiceSessionConfig? Config { get; private set; }
     public List<string> Actions { get; } = new();
     public List<string> FunctionOutputs { get; } = new();
@@ -55,6 +58,7 @@ internal sealed class FakeVoiceSession : IVoiceSession
         Actions.Add($"force:{text}");
         string id = $"r_force_{++_responses}";
         Emit(new ResponseStarted(id), new AudioDelta(id, new byte[3200]), new AssistantTranscript(id, $"i_{id}", text), new ResponseDone(id, "completed"));
+        Emit(AfterForce);
         return ValueTask.CompletedTask;
     }
 

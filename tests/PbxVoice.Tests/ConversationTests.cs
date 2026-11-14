@@ -146,6 +146,47 @@ public class EvidenceTests
         c.Answers["visit_time"].Quote = "he comes Friday morning";
         Assert.Equal(Outcome.Partial, Evidence.Evaluate(c).Outcome);
     }
+
+    // #25: a brief whose questions are all optional needs something captured to be completed.
+    [Theory]
+    [InlineData("automated_system", "automated_system")]
+    [InlineData("voicemail", "voicemail (no message could be left)")]
+    [InlineData(null, "no answers captured")] // the callee hung up after the assistant spoke
+    public void Optional_questions_with_nothing_captured_are_not_completed(string? claim, string reason)
+    {
+        var c = Conv(null, new AskItem { Name = "access", Question = "Does someone need to be home?", Required = false });
+        c.Transcript.Add(Turn(1, "assistant", "Hi, does someone need to be home for the plumber?"));
+        if (claim is not null)
+            c.EndClaim = new EndClaim { Reason = claim };
+
+        var (outcome, why) = Evidence.Evaluate(c);
+
+        Assert.Equal(Outcome.Failed, outcome);
+        Assert.Equal(reason, why);
+    }
+
+    [Fact]
+    public void An_empty_transcript_is_not_completed()
+    {
+        var c = Conv(null, new AskItem { Name = "access", Question = "Does someone need to be home?", Required = false });
+        Assert.Equal(Outcome.Failed, Evidence.Evaluate(c).Outcome);
+    }
+
+    [Fact]
+    public void A_matched_optional_answer_or_a_confirmed_message_completes_it()
+    {
+        var answered = Conv(null, new AskItem { Name = "access", Question = "Does someone need to be home?", Required = false });
+        answered.Transcript.Add(Turn(1, "assistant", "Does someone need to be home?"));
+        answered.Transcript.Add(Turn(2, "callee", "No, the door code works."));
+        answered.Answers["access"] = new AnswerRecord { Value = "no", Quote = "the door code works" };
+        Assert.Equal(Outcome.Completed, Evidence.Evaluate(answered).Outcome);
+
+        var confirmed = Conv("The leak is under the sink.", new AskItem { Name = "access", Question = "Does someone need to be home?", Required = false });
+        confirmed.MessageDelivered = true;
+        confirmed.Transcript.Add(Turn(1, "assistant", "The leak is under the sink.", scripted: true));
+        confirmed.Transcript.Add(Turn(2, "callee", "Got it, thanks."));
+        Assert.Equal(Outcome.Completed, Evidence.Evaluate(confirmed).Outcome);
+    }
 }
 
 public class InstructionsAndBriefTests
@@ -495,6 +536,54 @@ public class ConversationFlowTests
         Assert.Equal(1, call.PlaybackClears);
         Assert.Contains("cancel", s.Actions);
         Assert.Equal(1600, call.AudioBytesPlayed); // the delta after the barge-in was dropped
+    }
+
+    // #27: response.done ends generation; the message is heard only when its audio has played.
+    private static async Task<(CallRecord Record, FakeCall Call, FakeVoiceSession Session)> RunWhileMessagePlays(
+        Action<Harness, FakeCall, FakeVoiceSession> whileQueued)
+    {
+        var h = new Harness();
+        var call = new FakeCall { Pending = true }; // the message audio is still queued
+        var session = new FakeVoiceSession { AfterForce = Callee("Hold on, who is this?") }
+            .Then(Batch(Says("Did you get that?"), Tool("end_call", new { reason = "done" })));
+        h.Phone.Answer(call);
+        h.Sessions.Next.Enqueue(session);
+        var id = await h.CallNow(new { type = "conversation", to = "mom", brief = Brief(), options = new { max_attempts = 1 } });
+
+        var running = h.RunDue();
+        for (int i = 0; i < 200 && !session.Actions.Any(a => a.StartsWith("force:")); i++)
+            await Task.Delay(10);
+        await Task.Delay(300); // the flow has handled response.done and the callee's speech
+        whileQueued(h, call, session);
+        await running.WaitAsync(TimeSpan.FromSeconds(20));
+        var record = h.Record(id);
+        h.Dispose();
+        return (record, call, session);
+    }
+
+    [Fact]
+    public async Task The_message_is_not_interrupted_or_delivered_until_its_audio_has_played()
+    {
+        var (r, call, session) = await RunWhileMessagePlays((_, c, s) =>
+        {
+            Assert.Equal(0, c.PlaybackClears);              // callee speech did not cut the message
+            Assert.DoesNotContain("cancel", s.Actions);
+            Assert.DoesNotContain(s.Actions, a => a.StartsWith("response")); // the next turn waits for playback
+            c.CalleeHangsUp();                              // before the queue drained
+        });
+
+        Assert.False(r.Conversation!.MessageDelivered);
+        Assert.Equal(0, call.PlaybackClears);
+        Assert.NotEqual("message delivered but not confirmed", r.Reason);
+    }
+
+    [Fact]
+    public async Task The_message_is_delivered_when_its_audio_has_played()
+    {
+        var (r, _, session) = await RunWhileMessagePlays((_, c, _) => c.Pending = false);
+
+        Assert.True(r.Conversation!.MessageDelivered);
+        Assert.Contains(session.Actions, a => a.StartsWith("response:"));
     }
 
     [Fact]

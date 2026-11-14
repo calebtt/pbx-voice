@@ -192,18 +192,43 @@ internal sealed class XaiVoiceSession : IVoiceSession
                     }
                     message.Write(buffer, 0, result.Count);
                 } while (!result.EndOfMessage);
-                Handle(Encoding.UTF8.GetString(message.GetBuffer(), 0, (int)message.Length));
+                HandleSafely(Encoding.UTF8.GetString(message.GetBuffer(), 0, (int)message.Length));
             }
         }
         catch (Exception ex) when (ex is OperationCanceledException or WebSocketException)
         {
             reason = ex is OperationCanceledException ? "closed" : "connection lost: " + ex.Message;
         }
+        catch (Exception ex)
+        {
+            // Never fault the loop: DisposeAsync awaits it, and a fault would replace the call's result.
+            reason = "receive error: " + ex.Message;
+            Log.Warning(ex, "Voice session receive loop failed");
+        }
         finally
         {
             _ready.TrySetException(new InvalidOperationException("voice session " + reason));
             _events.Writer.TryWrite(new SessionClosed(reason));
             _events.Writer.TryComplete();
+        }
+    }
+
+    /// <summary>
+    /// <see cref="Handle"/> for one frame from the server. A frame that can't be mapped (not JSON,
+    /// or an audio delta that isn't base64) is logged and reported as a <see cref="SessionError"/>,
+    /// and the session goes on (#34).
+    /// </summary>
+    internal void HandleSafely(string json)
+    {
+        try
+        {
+            Handle(json);
+        }
+        catch (Exception ex) when (ex is JsonException or FormatException or InvalidOperationException or ArgumentException)
+        {
+            string head = json.Length > 120 ? json[..120] + "…" : json;
+            Log.Warning("Voice session: ignored a malformed server event ({Error}): {Head}", ex.Message, head);
+            _events.Writer.TryWrite(new SessionError($"malformed server event: {ex.GetType().Name}: {ex.Message}"));
         }
     }
 
@@ -273,9 +298,27 @@ internal sealed class XaiVoiceSession : IVoiceSession
         {
         }
         _cts.Cancel();
-        if (_receive is not null) await _receive.ConfigureAwait(false);
-        if (_send is not null) await _send.ConfigureAwait(false);
-        _ws?.Dispose();
-        _cts.Dispose();
+        // Never throws: the loops' own failures are logged, not rethrown into the call's result (#34).
+        try
+        {
+            foreach (var loop in new[] { _receive, _send })
+            {
+                if (loop is null)
+                    continue;
+                try
+                {
+                    await loop.ConfigureAwait(false);
+                }
+                catch (Exception ex)
+                {
+                    Log.Warning(ex, "Voice session loop ended with an error");
+                }
+            }
+        }
+        finally
+        {
+            _ws?.Dispose();
+            _cts.Dispose();
+        }
     }
 }

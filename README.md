@@ -67,7 +67,8 @@ A live voice call run by the Grok Voice realtime model, following a brief:
 
 **The outcome comes from evidence, not from the model's say-so.**
 - An answer counts (`evidence: matched`) only when its quote appears in the callee's own transcribed words, after the question was asked.
-- `completed` needs every required answer matched, and, if there was a message, the callee confirming it.
+- `completed` needs every required answer matched, and, if there was a message, the callee confirming it. It also needs something captured: at least one matched answer, or the confirmed message. A brief whose questions are all optional, with no message and no matched answer, ends as `failed` (`no answers captured`, or the model's end reason such as `automated_system`); with an answer recorded but not matched, `partial`.
+- The message counts as delivered (`message_delivered`) only once its audio has finished playing, and the callee can't talk over it until then.
 - `voicemail_left` and `declined` also need the daemon's own check.
 - Other outcomes: `partial`, `degraded_to_message`, `not_answered`, `missed`, `failed`.
 

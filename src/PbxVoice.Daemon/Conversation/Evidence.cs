@@ -165,7 +165,11 @@ internal static class Evidence
         bool requiredMatched = c.Brief.Ask.Where(a => a.Required)
             .All(a => c.Answers.TryGetValue(a.Name, out var ans) && ans.Evidence == "matched");
         bool messageOk = c.Brief.Message is null || c.MessageConfirmed == true;
-        if (requiredMatched && messageOk && (c.Brief.Ask.Count > 0 || c.MessageDelivered))
+        // Completed needs something captured (#25): a matched answer, or the message confirmed. A
+        // brief whose questions are all optional is otherwise trivially "all required matched".
+        bool captured = c.Answers.Values.Any(a => a.Evidence == "matched")
+            || (c.Brief.Message is not null && c.MessageConfirmed == true);
+        if (requiredMatched && messageOk && captured)
             return (Outcome.Completed, null);
 
         if (c.Answers.Count > 0)

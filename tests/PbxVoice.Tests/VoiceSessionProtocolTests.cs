@@ -157,6 +157,35 @@ public class VoiceSessionProtocolTests : IAsyncLifetime
         Assert.IsType<SessionClosed>(await Event(session));
     }
 
+    // #34: a frame that can't be mapped is reported and skipped; the session goes on, and
+    // DisposeAsync never throws into the call's result.
+    [Fact]
+    public async Task A_malformed_server_event_is_reported_and_the_session_goes_on()
+    {
+        var factory = new XaiVoiceSessionFactory("k", _base);
+        var session = factory.Create();
+        var connecting = session.ConnectAsync(new VoiceSessionConfig("x", "eve", "m", "none", "en", Array.Empty<object>()), CancellationToken.None);
+        await Next("session.update");
+        await _toSend.Writer.WriteAsync("""{"type":"session.updated"}""");
+        await connecting;
+
+        foreach (var json in new[]
+        {
+            "this is not JSON",
+            """{"type":"response.output_audio.delta","response_id":"r1","delta":"%%% not base64 %%%"}""",
+            """{"type":"response.created","response":{"id":"r2"}}""",
+        })
+            await _toSend.Writer.WriteAsync(json);
+
+        Assert.Contains("malformed server event", Assert.IsType<SessionError>(await Event(session)).Message);
+        Assert.Contains("FormatException", Assert.IsType<SessionError>(await Event(session)).Message);
+        Assert.Equal(new ResponseStarted("r2"), await Event(session));
+
+        await _toSend.Writer.WriteAsync("CLOSE");
+        Assert.IsType<SessionClosed>(await Event(session));
+        await session.DisposeAsync(); // completes without throwing
+    }
+
     [Fact]
     public async Task A_refused_connection_fails_the_connect()
     {

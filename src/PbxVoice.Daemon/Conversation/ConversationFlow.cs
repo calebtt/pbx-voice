@@ -158,7 +158,10 @@ internal static class ConversationFlow
     {
         public int Seq;
         public bool Spoken;
+        /// <summary>True until the verbatim message has played out (not just been generated), or was cut off.</summary>
         public bool MessagePending;
+        public bool MessageGenerated;
+        public bool MessageGeneratedOk;
         public bool AwaitingForcedStart;
         public string? ForcedResponseId;
         public string? CurrentResponse;
@@ -211,12 +214,24 @@ internal static class ConversationFlow
                     s.HardStopped = true;
                     s.EndedBy = "max_minutes";
                     line.ClearPlayback();
+                    s.MessagePending = false; // a message cut off here was not delivered
                     if (s.CurrentResponse is { } current)
                         s.Dropped.Add(current);
                     if (sessionOpen)
                         await session.ForceMessageAsync($"I'm sorry, I have to go now. {settings.DisplayName} will follow up. Goodbye.", interruptible: false).ConfigureAwait(false);
                     s.EndRequested = true;
                     s.EndRequestedAt = Clock.ElapsedMilliseconds + 2000; // give the closing line time to start
+                }
+
+                if (s.MessagePending && s.MessageGenerated && !line.PlaybackPending)
+                {
+                    // #27: response.done ends generation, not playback. The message is delivered,
+                    // and stops being uninterruptible, only once its queued audio has played.
+                    s.MessagePending = false;
+                    bool delivered = s.MessageGeneratedOk;
+                    ctx.Update((c, _) => c.Conversation!.MessageDelivered = delivered);
+                    if (!s.EndRequested && sessionOpen)
+                        await session.CreateResponseAsync(Instructions.AfterMessage(brief)).ConfigureAwait(false);
                 }
 
                 if (sessionOpen)
@@ -306,13 +321,11 @@ internal static class ConversationFlow
                 break;
 
             case ResponseDone d:
+                // Generated, not yet heard: the loop marks it delivered when its audio has played.
                 if (d.ResponseId == s.ForcedResponseId && s.MessagePending)
                 {
-                    s.MessagePending = false;
-                    bool delivered = d.Status is "" or "completed";
-                    ctx.Update((c, _) => c.Conversation!.MessageDelivered = delivered);
-                    if (!s.EndRequested)
-                        await session.CreateResponseAsync(Instructions.AfterMessage(brief)).ConfigureAwait(false);
+                    s.MessageGenerated = true;
+                    s.MessageGeneratedOk = d.Status is "" or "completed";
                 }
                 break;
 

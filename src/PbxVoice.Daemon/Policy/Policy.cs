@@ -82,7 +82,12 @@ internal sealed class SpeechSettings
     /// <summary>xAI voice for rendered clips.</summary>
     public string Voice { get; set; } = "eve";
     public string Language { get; set; } = "en";
+
+    /// <summary>Speaking rate for rendered clips, <see cref="MinSpeed"/> to <see cref="MaxSpeed"/>.</summary>
     public double Speed { get; set; } = 1.0;
+
+    public const double MinSpeed = 0.5;
+    public const double MaxSpeed = 2.0;
 
     /// <summary>Grok Voice model for conversation calls.</summary>
     public string RealtimeModel { get; set; } = "grok-voice-latest";
@@ -112,12 +117,27 @@ internal static class PolicyLoader
                 errors.Add($"{field}: unknown time zone '{id}'");
         }
 
+        // A section written as null ("limits": null) is an error, not a crash (#24).
+        foreach (var (field, value) in new (string, object?)[]
+                 {
+                     ("contacts", p.Contacts), ("limits", p.Limits), ("phrases", p.Phrases), ("speech", p.Speech),
+                     ("timezone", p.Timezone), ("display_name", p.DisplayName),
+                 })
+        {
+            if (value is null)
+                errors.Add($"{field} must not be null");
+        }
+        if (errors.Count > 0)
+            throw new InvalidDataException("policy.json: " + string.Join("; ", errors));
+
         Zone("timezone", p.Timezone);
         foreach (var (name, contact) in p.Contacts)
         {
             if (string.IsNullOrWhiteSpace(name))
                 errors.Add("contacts: empty contact name");
-            if (string.IsNullOrWhiteSpace(contact.Number))
+            if (contact is null)
+                errors.Add($"contacts.{name} must not be null");
+            else if (string.IsNullOrWhiteSpace(contact.Number))
                 errors.Add($"contacts.{name}: number is required");
         }
         if (p.QuietHours is { } q)
@@ -135,10 +155,22 @@ internal static class PolicyLoader
         if (p.Limits.MaxMessageAttempts is < 1 or > 50) errors.Add("limits.max_message_attempts must be 1-50");
         if (p.Limits.MaxRingSeconds is < 5 or > 300) errors.Add("limits.max_ring_seconds must be 5-300");
         if (p.Limits.MinRetryMinutes < 1) errors.Add("limits.min_retry_minutes must be at least 1");
+        // #33: zero would refuse every conversation with a confusing "1-0" range.
+        if (p.Limits.ConversationMinutesPerDay < 1) errors.Add("limits.conversation_minutes_per_day must be at least 1");
+        if (p.Limits.MaxConversationMinutes < 1) errors.Add("limits.max_conversation_minutes must be at least 1");
+        else if (p.Limits.MaxConversationMinutes > p.Limits.ConversationMinutesPerDay && p.Limits.ConversationMinutesPerDay >= 1)
+            errors.Add("limits.max_conversation_minutes must not be more than limits.conversation_minutes_per_day");
         foreach (var (name, list) in new[] { ("awake", p.Phrases.Awake), ("snooze", p.Phrases.Snooze), ("confirm", p.Phrases.Confirm), ("repeat", p.Phrases.Repeat) })
         {
             if (list is null || list.Count == 0 || list.Any(string.IsNullOrWhiteSpace))
                 errors.Add($"phrases.{name} needs at least one non-empty phrase");
+        }
+        if (p.Speech.Speed is < SpeechSettings.MinSpeed or > SpeechSettings.MaxSpeed or double.NaN)
+            errors.Add($"speech.speed must be {SpeechSettings.MinSpeed}-{SpeechSettings.MaxSpeed}");
+        foreach (var (field, value) in new[] { ("voice", p.Speech.Voice), ("language", p.Speech.Language), ("realtime_model", p.Speech.RealtimeModel), ("realtime_reasoning", p.Speech.RealtimeReasoning) })
+        {
+            if (string.IsNullOrWhiteSpace(value))
+                errors.Add($"speech.{field} must not be empty");
         }
         if (p.SetupLimitSeconds is < 2 or > 60) errors.Add("setup_limit_seconds must be 2-60");
         if (p.InboundRejectStatus is not (480 or 486 or 603)) errors.Add("inbound_reject_status must be 480, 486, or 603");
@@ -209,9 +241,11 @@ internal sealed class PolicyProvider
                             _current = PolicyLoader.Load(_path);
                             LastError = null;
                         }
-                        catch (Exception ex) when (ex is InvalidDataException or JsonException or IOException)
+                        catch (Exception ex)
                         {
-                            LastError = ex.Message;
+                            // Any failure keeps the last good policy and is reported through status (#24),
+                            // including a file that became unreadable (UnauthorizedAccessException).
+                            LastError = ex is InvalidDataException or JsonException ? ex.Message : $"policy.json could not be read: {ex.Message}";
                         }
                     }
                 }

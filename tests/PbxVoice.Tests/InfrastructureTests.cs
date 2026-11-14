@@ -130,6 +130,22 @@ public class PolicyTests
     [InlineData("""{"inbound_reject_status":200}""", "inbound_reject_status")]
     [InlineData("""{"quiet_hours":{"start":"9pm","end":"08:00","tz":"UTC"}}""", "quiet_hours.start")]
     [InlineData("""{"phrases":{"awake":[]}}""", "phrases.awake")]
+    // #24: null sections and contacts are validation errors, not NullReferenceExceptions.
+    [InlineData("""{"limits":null}""", "limits must not be null")]
+    [InlineData("""{"phrases":null}""", "phrases must not be null")]
+    [InlineData("""{"contacts":null}""", "contacts must not be null")]
+    [InlineData("""{"speech":null}""", "speech must not be null")]
+    [InlineData("""{"contacts":{"me":null}}""", "contacts.me must not be null")]
+    [InlineData("""{"phrases":{"awake":null}}""", "phrases.awake")]
+    // #33: conversation minute limits and speech speed.
+    [InlineData("""{"limits":{"conversation_minutes_per_day":0}}""", "limits.conversation_minutes_per_day must be at least 1")]
+    [InlineData("""{"limits":{"conversation_minutes_per_day":-5}}""", "limits.conversation_minutes_per_day must be at least 1")]
+    [InlineData("""{"limits":{"max_conversation_minutes":0}}""", "limits.max_conversation_minutes must be at least 1")]
+    [InlineData("""{"limits":{"max_conversation_minutes":-1}}""", "limits.max_conversation_minutes must be at least 1")]
+    [InlineData("""{"limits":{"max_conversation_minutes":10,"conversation_minutes_per_day":5}}""", "must not be more than limits.conversation_minutes_per_day")]
+    [InlineData("""{"speech":{"speed":0}}""", "speech.speed must be 0.5-2")]
+    [InlineData("""{"speech":{"speed":3.5}}""", "speech.speed must be 0.5-2")]
+    [InlineData("""{"speech":{"language":""}}""", "speech.language must not be empty")]
     public void Invalid_policies_are_rejected(string json, string expected)
     {
         var ex = Assert.Throws<InvalidDataException>(() => PolicyLoader.Parse(json));
@@ -151,6 +167,57 @@ public class PolicyTests
         }
         finally
         {
+            File.Delete(file);
+        }
+    }
+
+    [Theory]
+    [InlineData("""{"limits":null}""", "limits must not be null")]
+    [InlineData("""{"phrases":null}""", "phrases must not be null")]
+    [InlineData("""{"contacts":null}""", "contacts must not be null")]
+    [InlineData("""{"contacts":{"me":null}}""", "contacts.me must not be null")]
+    public void An_edit_with_a_null_section_keeps_the_last_good_policy(string edit, string expected)
+    {
+        var file = Path.GetTempFileName();
+        try
+        {
+            File.WriteAllText(file, """{"contacts":{"me":{"number":"101","self":true}}}""");
+            var provider = new PolicyProvider(file);
+            File.WriteAllText(file, edit);
+            File.SetLastWriteTimeUtc(file, DateTime.UtcNow.AddSeconds(5));
+
+            var first = provider.Current;  // no exception, on the first read
+            var second = provider.Current; // or later ones
+
+            Assert.True(first.Contacts.ContainsKey("me"));
+            Assert.Same(first, second);
+            Assert.Contains(expected, provider.LastError);
+        }
+        finally
+        {
+            File.Delete(file);
+        }
+    }
+
+    [Fact]
+    public void An_unreadable_policy_file_keeps_the_last_good_policy()
+    {
+        if (Environment.UserName == "root")
+            return; // root reads mode-000 files
+        var file = Path.GetTempFileName();
+        try
+        {
+            File.WriteAllText(file, """{"contacts":{"me":{"number":"101","self":true}}}""");
+            var provider = new PolicyProvider(file);
+            File.SetUnixFileMode(file, UnixFileMode.None);
+            File.SetLastWriteTimeUtc(file, DateTime.UtcNow.AddSeconds(5));
+
+            Assert.True(provider.Current.Contacts.ContainsKey("me"));
+            Assert.Contains("could not be read", provider.LastError);
+        }
+        finally
+        {
+            File.SetUnixFileMode(file, UnixFileMode.UserRead | UnixFileMode.UserWrite);
             File.Delete(file);
         }
     }
